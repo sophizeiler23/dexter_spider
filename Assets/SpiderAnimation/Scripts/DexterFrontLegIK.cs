@@ -148,6 +148,13 @@ namespace Dexter.Spider
         [Tooltip("Duration of an automatic anti-drag recovery step.")]
         [SerializeField, Min(0.05f)] private float lagRecoveryDuration = 0.24f;
 
+        [Header("Cadence Balance Posture")]
+        [Tooltip("Maximum outward foot reach on the slower side during a cadence imbalance.")]
+        [SerializeField, Min(0f)] private float balanceLegExtension = 0.12f;
+        [Tooltip("Maximum inward foot draw on the faster side during a cadence imbalance.")]
+        [SerializeField, Min(0f)] private float balanceLegBend = 0.08f;
+        [SerializeField, Min(0.01f)] private float balancePostureResponse = 3f;
+
         [Header("IK")]
         [SerializeField, Range(1, 32)] private int solverIterations = 14;
         [SerializeField, Min(0.00001f)] private float positionTolerance = 0.001f;
@@ -216,6 +223,11 @@ namespace Dexter.Spider
         private int lastActiveFinger;
         private int pressedFinger;
         private float lastFingerPressTime = -1f;
+        private float lastLeftFingerPressTime = -1f;
+        private float lastRightFingerPressTime = -1f;
+        private float leftFingerCadence;
+        private float rightFingerCadence;
+        private float currentCadenceImbalance;
         private float targetForwardDistance;
         private float currentForwardDistance;
         private float forwardDistanceVelocity;
@@ -290,6 +302,11 @@ namespace Dexter.Spider
         private void OnDisable()
         {
             EndDiagnosticTrace();
+            if (body != null)
+            {
+                body.localPosition = bodyLocalPosition;
+                body.localRotation = bodyLocalRotation;
+            }
         }
 
         private void LateUpdate()
@@ -304,8 +321,33 @@ namespace Dexter.Spider
             UpdateTare();
             UpdateDisplacements();
 
-            SolveLegs(leftLegs);
-            SolveLegs(rightLegs);
+            float cadenceScale = Mathf.Max(
+                0.25f, Mathf.Max(leftFingerCadence, rightFingerCadence));
+            float targetCadenceImbalance =
+                (leftFingerCadence - rightFingerCadence) / cadenceScale;
+            currentCadenceImbalance = Mathf.MoveTowards(
+                currentCadenceImbalance,
+                targetCadenceImbalance,
+                balancePostureResponse * Time.deltaTime);
+
+            SolveLegsWithBalancePosture(
+                leftLegs, true, currentCadenceImbalance);
+            SolveLegsWithBalancePosture(
+                rightLegs, false, currentCadenceImbalance);
+
+            bool bodyIsMoving = Mathf.Abs(forwardSpeed) > 0.01f ||
+                                Mathf.Abs(currentTurnSpeed) > 0.5f ||
+                                leftGaitWeight > 0.05f ||
+                                rightGaitWeight > 0.05f ||
+                                turnGaitWeight > 0.05f;
+            terrainForces?.ApplyBodyWeightAfterIk(
+                body,
+                bodyLocalPosition,
+                bodyLocalRotation,
+                bodyIsMoving,
+                currentCadenceImbalance,
+                rigSpace.right,
+                rigSpace.forward);
         }
 
         private void BeginDiagnosticTrace()
@@ -887,11 +929,50 @@ namespace Dexter.Spider
 
             if (lastAlternationTime >= 0f && Time.time - lastAlternationTime > 0.75f)
                 forwardSpeed = Mathf.MoveTowards(forwardSpeed, 0f, Time.deltaTime * 4f);
+
+            if (lastLeftFingerPressTime < 0f ||
+                Time.time - lastLeftFingerPressTime > 0.75f)
+                leftFingerCadence = Mathf.MoveTowards(
+                    leftFingerCadence, 0f, Time.deltaTime * 3f);
+            if (lastRightFingerPressTime < 0f ||
+                Time.time - lastRightFingerPressTime > 0.75f)
+                rightFingerCadence = Mathf.MoveTowards(
+                    rightFingerCadence, 0f, Time.deltaTime * 3f);
         }
 
         private void RegisterFingerPress(int activeFinger)
         {
             float now = Time.time;
+            if (activeFinger == 1)
+            {
+                if (lastLeftFingerPressTime >= 0f)
+                {
+                    float cadence = 1f / Mathf.Max(
+                        0.08f, now - lastLeftFingerPressTime);
+                    leftFingerCadence = Mathf.Lerp(
+                        leftFingerCadence, cadence, 0.5f);
+                }
+                else
+                {
+                    leftFingerCadence = gaitPhaseSpeed;
+                }
+                lastLeftFingerPressTime = now;
+            }
+            else
+            {
+                if (lastRightFingerPressTime >= 0f)
+                {
+                    float cadence = 1f / Mathf.Max(
+                        0.08f, now - lastRightFingerPressTime);
+                    rightFingerCadence = Mathf.Lerp(
+                        rightFingerCadence, cadence, 0.5f);
+                }
+                else
+                {
+                    rightFingerCadence = gaitPhaseSpeed;
+                }
+                lastRightFingerPressTime = now;
+            }
             if (lastFingerPressTime >= 0f)
             {
                 float pressInterval = Mathf.Max(0.001f, now - lastFingerPressTime);
@@ -1734,12 +1815,32 @@ namespace Dexter.Spider
                 RestoreLegPose(legs[i]);
         }
 
-        private void SolveLegs(LegChain[] legs)
+        private void SolveLegsWithBalancePosture(
+            LegChain[] legs,
+            bool isLeftSide,
+            float cadenceImbalance)
         {
+            float imbalance = Mathf.Clamp(cadenceImbalance, -1f, 1f);
+            bool thisSideIsFaster = isLeftSide
+                ? imbalance > 0f
+                : imbalance < 0f;
+            float strength = Mathf.Abs(imbalance);
+            float radialAmount = (thisSideIsFaster
+                ? -balanceLegBend
+                : balanceLegExtension) * strength;
+
             for (int i = 0; i < legs.Length; i++)
             {
                 LegChain leg = legs[i];
-                SolveCcd(leg, leg.WorldTarget);
+                Vector3 outward = Vector3.ProjectOnPlane(
+                    leg.WorldTarget - body.position, Vector3.up).normalized;
+                if (outward.sqrMagnitude < 0.0001f)
+                {
+                    Vector3 rigRight = Vector3.ProjectOnPlane(
+                        rigSpace.right, Vector3.up).normalized;
+                    outward = isLeftSide ? -rigRight : rigRight;
+                }
+                SolveCcd(leg, leg.WorldTarget + outward * radialAmount);
             }
         }
 
@@ -1825,6 +1926,9 @@ namespace Dexter.Spider
             maximumRestReachRatio = Mathf.Clamp(maximumRestReachRatio, 1f, 1.25f);
             maximumPlantedFootLag = Mathf.Max(0.05f, maximumPlantedFootLag);
             lagRecoveryDuration = Mathf.Max(0.05f, lagRecoveryDuration);
+            balanceLegExtension = Mathf.Max(0f, balanceLegExtension);
+            balanceLegBend = Mathf.Max(0f, balanceLegBend);
+            balancePostureResponse = Mathf.Max(0.01f, balancePostureResponse);
             stepLiftHeight = Mathf.Max(0f, stepLiftHeight);
             gaitActivationThreshold = Mathf.Max(0f, gaitActivationThreshold);
             minimumStrideLength = Mathf.Max(0f, minimumStrideLength);

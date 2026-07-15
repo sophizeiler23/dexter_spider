@@ -12,8 +12,24 @@ namespace Dexter.Spider
         [SerializeField, Min(0f)] private float groundFrictionCoefficient = 0.90f;
         [SerializeField, Min(0f)] private float maximumSlideSpeed = 0.375f;
 
+        [Header("Body Weight")]
+        [Tooltip("Small world-space distance the body settles while the spider is resting.")]
+        [SerializeField, Min(0f)] private float restingBodyDrop = 0.09f;
+        [Tooltip("How quickly the body settles and rises without affecting locomotion.")]
+        [SerializeField, Min(0.01f)] private float bodyHeightResponse = 3f;
+        [Tooltip("Maximum body tip when one finger is moving faster than the other.")]
+        [SerializeField, Range(0f, 8f)] private float maximumBalanceTipDegrees = 4.5f;
+        [Tooltip("Amplifies small differences in index and middle-finger rhythm.")]
+        [SerializeField, Range(0.5f, 3f)] private float cadenceBalanceSensitivity = 1.75f;
+        [Tooltip("Maximum world-space body shift toward the faster-working side.")]
+        [SerializeField, Min(0f)] private float maximumBalanceShift = 0.10f;
+        [Tooltip("How quickly the body responds to a left/right cadence imbalance.")]
+        [SerializeField, Min(0.01f)] private float balanceTipResponse = 3f;
+
         private Terrain activeTerrain;
         private Vector3 environmentalVelocity;
+        private float currentBodyDrop;
+        private float currentBalanceTip;
 
         public Vector3 ApplyForces(Vector3 worldPosition)
         {
@@ -55,6 +71,56 @@ namespace Dexter.Spider
             environmentalVelocity = Vector3.zero;
         }
 
+        /// <summary>
+        /// Applies a bounded visual weight offset after IK has finished. Because
+        /// the controller restores the authored pose before the next solve, this
+        /// cannot accumulate or feed back into locomotion.
+        /// </summary>
+        public void ApplyBodyWeightAfterIk(
+            Transform body,
+            Vector3 restLocalPosition,
+            Quaternion restLocalRotation,
+            bool isMoving,
+            float normalizedCadenceImbalance,
+            Vector3 rigRightWorld,
+            Vector3 rigForwardWorld)
+        {
+            if (body == null)
+                return;
+
+            float targetDrop = isMoving ? 0f : restingBodyDrop;
+            currentBodyDrop = Mathf.MoveTowards(
+                currentBodyDrop,
+                targetDrop,
+                bodyHeightResponse * restingBodyDrop * Time.deltaTime);
+
+            float weightedImbalance = Mathf.Clamp(
+                normalizedCadenceImbalance * cadenceBalanceSensitivity,
+                -1f,
+                1f);
+            Vector3 safeRight = Vector3.ProjectOnPlane(
+                rigRightWorld, Vector3.up).normalized;
+            Vector3 worldOffset = -Vector3.up * currentBodyDrop -
+                                  safeRight * weightedImbalance * maximumBalanceShift;
+            Vector3 localOffset = body.parent != null
+                ? body.parent.InverseTransformVector(worldOffset)
+                : worldOffset;
+            body.localPosition = restLocalPosition + localOffset;
+
+            float targetTip = weightedImbalance *
+                              maximumBalanceTipDegrees;
+            currentBalanceTip = Mathf.MoveTowards(
+                currentBalanceTip,
+                targetTip,
+                balanceTipResponse * maximumBalanceTipDegrees * Time.deltaTime);
+            body.localRotation = restLocalRotation;
+            Vector3 safeForward = Vector3.ProjectOnPlane(
+                rigForwardWorld, Vector3.up).normalized;
+            if (safeForward.sqrMagnitude > 0.0001f)
+                body.rotation = Quaternion.AngleAxis(
+                    currentBalanceTip, safeForward) * body.rotation;
+        }
+
         private void EnsureTerrain()
         {
             if (activeTerrain != null)
@@ -90,6 +156,10 @@ namespace Dexter.Spider
             gravityAcceleration = Mathf.Max(0f, gravityAcceleration);
             groundFrictionCoefficient = Mathf.Max(0f, groundFrictionCoefficient);
             maximumSlideSpeed = Mathf.Max(0f, maximumSlideSpeed);
+            restingBodyDrop = Mathf.Max(0f, restingBodyDrop);
+            bodyHeightResponse = Mathf.Max(0.01f, bodyHeightResponse);
+            maximumBalanceShift = Mathf.Max(0f, maximumBalanceShift);
+            balanceTipResponse = Mathf.Max(0.01f, balanceTipResponse);
         }
     }
 }
