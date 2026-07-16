@@ -8,7 +8,10 @@ namespace Dexter.Spider
     [DisallowMultipleComponent]
     public sealed class SpiderTerrainForces : MonoBehaviour
     {
+        [Header("Gravity")]
         [SerializeField, Min(0f)] private float gravityAcceleration = 9.81f;
+
+        [Header("Friction and Grip")]
         [SerializeField, Min(0f)] private float groundFrictionCoefficient = 0.90f;
         [SerializeField, Min(0f)] private float maximumSlideSpeed = 0.4f;
         [Tooltip("Additional spider-like adhesion to the surface. Full effect requires a supported, balanced stance.")]
@@ -227,13 +230,12 @@ namespace Dexter.Spider
                 1f);
             Vector3 worldOffset = -Vector3.up * currentBodyDrop -
                                   safeRight * weightedImbalance * maximumBalanceShift;
+            float targetTip = weightedImbalance *
+                              maximumBalanceTipDegrees;
             Vector3 localOffset = body.parent != null
                 ? body.parent.InverseTransformVector(worldOffset)
                 : worldOffset;
             body.localPosition = restLocalPosition + localOffset;
-
-            float targetTip = weightedImbalance *
-                              maximumBalanceTipDegrees;
             float forwardCenterBias = maximumBalanceShift > 0.0001f
                 ? centerOfMassOffset.z / maximumBalanceShift
                 : 0f;

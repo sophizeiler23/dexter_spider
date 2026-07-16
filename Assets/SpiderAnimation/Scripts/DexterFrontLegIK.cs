@@ -72,6 +72,12 @@ namespace Dexter.Spider
         [SerializeField, Range(0.2f, 0.6f)] private float swingPhaseFraction = 0.40f;
         [Tooltip("How quickly walking fades in and out as finger movement starts and stops.")]
         [SerializeField, Min(0.01f)] private float gaitBlendSpeed = 8f;
+        [Tooltip("Extra lift emphasis for the swing phase during walking.")]
+        [SerializeField, Range(1f, 3f)] private float walkingLiftEmphasis = 1.5f;
+        [Tooltip("Extra forward reach emphasis during the swing phase.")]
+        [SerializeField, Range(1f, 2f)] private float walkingStrideEmphasis = 1.3f;
+        [Tooltip("Extra backward push emphasis after a foot plants.")]
+        [SerializeField, Range(1f, 3f)] private float walkingPushEmphasis = 1.6f;
 
         [Header("Alternating Finger Locomotion")]
         [Tooltip("Minimum forward/back force in Newtons for a finger to register. Kept low for small finger forces.")]
@@ -118,7 +124,7 @@ namespace Dexter.Spider
         [Tooltip("Slowest multiplier used for a valid, very small finger movement.")]
         [SerializeField, Range(0.1f, 1f)] private float minimumStepSpeedMultiplier = 0.5f;
         [Tooltip("Hard limit on the force-driven leg and body movement multiplier.")]
-        [SerializeField, Range(1f, 4f)] private float maximumStepSpeedMultiplier = 2f;
+        [SerializeField, Range(1f, 6f)] private float maximumStepSpeedMultiplier = 2.25f;
 
         [Header("Two-Finger Turning")]
         [Tooltip("Small X dead zone before an iPad turn registers.")]
@@ -182,7 +188,6 @@ namespace Dexter.Spider
         [Tooltip("Per-finger press cadence needed to provide full virtual string support.")]
         [SerializeField, Min(0.1f)] private float cadenceForFullSupport = 1.5f;
         [SerializeField, Min(0.01f)] private float balancePostureResponse = 3f;
-
         [Header("IK")]
         [SerializeField, Range(1, 32)] private int solverIterations = 14;
         [SerializeField, Min(0.00001f)] private float positionTolerance = 0.001f;
@@ -280,6 +285,7 @@ namespace Dexter.Spider
         private bool isRecoveringFromTurn;
         private float turnRecoveryElapsed;
         private SpiderTerrainForces terrainForces;
+        private SpiderEnvironmentForces environmentForces;
         private float activeForceSpeedMultiplier = 1f;
         private float activeForceStrideLength = 0.17f;
         private bool leftSideWaveInPlace;
@@ -320,8 +326,7 @@ namespace Dexter.Spider
                 BeginTare();
             else
                 UseUntaredRelayDefaults();
-            // Live CSV recording is intentionally disabled. Pre-recorded Dexter
-            // force files can be replayed without creating a new trace per run.
+            BeginDiagnosticTrace();
         }
 
         private void UseUntaredRelayDefaults()
@@ -344,6 +349,13 @@ namespace Dexter.Spider
                 body.localPosition = bodyLocalPosition;
                 body.localRotation = bodyLocalRotation;
             }
+        }
+
+        private void OnApplicationQuit()
+        {
+            // Ensure the final buffered row is written when Unity exits
+            // directly instead of disabling the scene object first.
+            EndDiagnosticTrace();
         }
 
         private void LateUpdate()
@@ -398,6 +410,8 @@ namespace Dexter.Spider
                 currentCadenceImbalance,
                 rigSpace.right,
                 rigSpace.forward);
+
+            WriteDiagnosticTraceRow();
         }
 
         private void BeginDiagnosticTrace()
@@ -453,7 +467,7 @@ namespace Dexter.Spider
             row.Append("pressed_finger,last_active_finger,travel_direction,forward_speed,target_forward_distance,current_forward_distance,");
             row.Append("turn_input,turn_speed_deg_s,yaw_degrees,");
             row.Append("left_gait_phase,left_target_gait_phase,right_gait_phase,right_target_gait_phase,");
-            row.Append("spider_x,spider_y,spider_z");
+            row.Append("spider_x,spider_y,spider_z,body_x,body_y,body_z,body_pitch,body_roll,body_yaw");
             AppendFootHeader(row, "left", leftLegs != null ? leftLegs.Length : 4);
             AppendFootHeader(row, "right", rightLegs != null ? rightLegs.Length : 4);
             traceWriter.WriteLine(row.ToString());
@@ -466,30 +480,34 @@ namespace Dexter.Spider
                 int number = i + 1;
                 row.Append($",{side}_foot_{number}_x,{side}_foot_{number}_y,{side}_foot_{number}_z");
                 row.Append($",{side}_target_{number}_x,{side}_target_{number}_y,{side}_target_{number}_z");
+                row.Append($",{side}_ground_{number}_y,{side}_ground_{number}_clearance");
             }
         }
 
         private void WriteDiagnosticTraceRow()
         {
             DexterForceFrame frame = receiver != null ? receiver.LatestFrame : null;
-            if (traceWriter == null || frame == null || frame.sequence == lastTracedSequence)
+            if (traceWriter == null)
                 return;
 
-            lastTracedSequence = frame.sequence;
+            long sequence = frame != null ? frame.sequence : Time.frameCount;
+            if (sequence == lastTracedSequence)
+                return;
+            lastTracedSequence = sequence;
             var row = new StringBuilder(4096);
             row.Append(Time.realtimeSinceStartupAsDouble.ToString("R", CultureInfo.InvariantCulture));
             AppendNumber(row, Time.timeAsDouble);
             AppendInteger(row, Time.frameCount);
-            AppendInteger(row, frame.sequence);
-            AppendNumber(row, receiver.LastFrameAge);
-            AppendBoolean(row, receiver.HasRecentFrame);
+            AppendInteger(row, sequence);
+            AppendNumber(row, receiver != null ? receiver.LastFrameAge : double.NaN);
+            AppendBoolean(row, receiver != null && receiver.HasRecentFrame);
             AppendBoolean(row, isTaring);
 
-            DexterFingerMeasurement thumb = receiver.GetFinger(DexterFinger.Thumb);
-            DexterFingerMeasurement index = receiver.GetFinger(DexterFinger.Index);
-            DexterFingerMeasurement middle = receiver.GetFinger(DexterFinger.Middle);
-            DexterFingerMeasurement ring = receiver.GetFinger(DexterFinger.Ring);
-            DexterFingerMeasurement pinky = receiver.GetFinger(DexterFinger.Pinky);
+            DexterFingerMeasurement thumb = receiver != null ? receiver.GetFinger(DexterFinger.Thumb) : null;
+            DexterFingerMeasurement index = receiver != null ? receiver.GetFinger(DexterFinger.Index) : null;
+            DexterFingerMeasurement middle = receiver != null ? receiver.GetFinger(DexterFinger.Middle) : null;
+            DexterFingerMeasurement ring = receiver != null ? receiver.GetFinger(DexterFinger.Ring) : null;
+            DexterFingerMeasurement pinky = receiver != null ? receiver.GetFinger(DexterFinger.Pinky) : null;
             AppendIntegerArray(row, thumb?.raw);
             AppendIntegerArray(row, index?.raw);
             AppendIntegerArray(row, middle?.raw);
@@ -521,6 +539,11 @@ namespace Dexter.Spider
             AppendNumber(row, rightGaitPhase);
             AppendNumber(row, targetRightGaitPhase);
             AppendVector3(row, transform.position);
+            AppendVector3(row, body != null ? body.position : Vector3.zero);
+            Vector3 bodyAngles = body != null ? body.eulerAngles : Vector3.zero;
+            AppendNumber(row, bodyAngles.x);
+            AppendNumber(row, bodyAngles.z);
+            AppendNumber(row, bodyAngles.y);
             AppendFeet(row, leftLegs);
             AppendFeet(row, rightLegs);
 
@@ -533,7 +556,7 @@ namespace Dexter.Spider
             }
         }
 
-        private static void AppendFeet(StringBuilder row, LegChain[] legs)
+        private void AppendFeet(StringBuilder row, LegChain[] legs)
         {
             if (legs == null)
                 return;
@@ -541,6 +564,16 @@ namespace Dexter.Spider
             {
                 AppendVector3(row, legs[i].Effector.position);
                 AppendVector3(row, legs[i].WorldTarget);
+                if (TrySampleTerrainHeight(legs[i].Effector.position, out float groundHeight))
+                {
+                    AppendNumber(row, groundHeight);
+                    AppendNumber(row, legs[i].Effector.position.y - groundHeight);
+                }
+                else
+                {
+                    AppendNumber(row, double.NaN);
+                    AppendNumber(row, double.NaN);
+                }
             }
         }
 
@@ -678,6 +711,7 @@ namespace Dexter.Spider
             if (receiver == null)
                 receiver = GetComponent<DexterRelayUdpReceiver>();
             terrainForces = GetComponent<SpiderTerrainForces>();
+            environmentForces = GetComponent<SpiderEnvironmentForces>();
             if (terrainForces == null)
                 terrainForces = gameObject.AddComponent<SpiderTerrainForces>();
 
@@ -819,7 +853,8 @@ namespace Dexter.Spider
                 WorldTarget = effector.position,
                 SwingStartWorldTarget = effector.position,
                 SwingEndWorldTarget = effector.position,
-                GroundClearance = GetGroundClearance(effector.position)
+                GroundClearance = Mathf.Min(
+                    0.12f, GetGroundClearance(effector.position))
             };
         }
 
@@ -1029,6 +1064,10 @@ namespace Dexter.Spider
             float requestedForwardSpeed = alternatingDriveAuthorized && inputRecentlyActive
                 ? normalForceTravelSpeed * activeForceSpeedMultiplier
                 : 0f;
+            if (environmentForces != null)
+                requestedForwardSpeed *= environmentForces.GetMovementMultiplier(
+                    locomotionWorldPosition);
+            requestedForwardSpeed *= GetPlantedPushDriveStrength();
             forwardSpeed = Mathf.MoveTowards(
                 forwardSpeed, requestedForwardSpeed, Time.deltaTime * 4f);
             currentForwardDistance += forwardSpeed * Time.deltaTime;
@@ -1164,13 +1203,17 @@ namespace Dexter.Spider
                 maximumStrideLength);
             UpdateSideWorldTargets(
                 leftLegs, Mathf.Repeat(leftGaitPhase, 1f),
-                leftGaitWeight, leftSideWaveInPlace ? 0f : strideLength, 1);
+                leftGaitWeight,
+                leftSideWaveInPlace ? 0f : strideLength * walkingStrideEmphasis,
+                1);
             // Tetrapod gait: the right side is half a cycle out of phase.
             // Left front + third move with right second + back, followed by
             // the complementary four-leg group.
             UpdateSideWorldTargets(
                 rightLegs, Mathf.Repeat(rightGaitPhase + 0.5f, 1f),
-                rightGaitWeight, rightSideWaveInPlace ? 0f : strideLength, 1);
+                rightGaitWeight,
+                rightSideWaveInPlace ? 0f : strideLength * walkingStrideEmphasis,
+                1);
         }
 
         private bool UpdateTurning(Vector2 leftForce, Vector2 rightForce)
@@ -1344,11 +1387,12 @@ namespace Dexter.Spider
                         leg.SwingStartWorldTarget,
                         leg.SwingEndWorldTarget,
                         swingProgress);
-                    leg.WorldTarget.y = Mathf.Lerp(
-                        leg.SwingStartWorldTarget.y,
-                        leg.SwingEndWorldTarget.y,
-                        swingProgress);
-                    leg.WorldTarget.y += Mathf.Sin(swingProgress * Mathf.PI) * stepLiftHeight;
+                leg.WorldTarget.y = Mathf.Lerp(
+                    leg.SwingStartWorldTarget.y,
+                    leg.SwingEndWorldTarget.y,
+                    swingProgress);
+                    leg.WorldTarget.y += Mathf.Sin(swingProgress * Mathf.PI) *
+                                         stepLiftHeight * walkingLiftEmphasis;
                 }
                 else if (leg.WasSwinging)
                 {
@@ -1458,6 +1502,9 @@ namespace Dexter.Spider
             float terrainMovementMultiplier = terrainForces != null
                 ? terrainForces.GetMovementMultiplier(locomotionWorldPosition)
                 : 1f;
+            if (environmentForces != null)
+                terrainMovementMultiplier *= environmentForces.GetMovementMultiplier(
+                    locomotionWorldPosition);
             locomotionWorldPosition += GetRigForward() *
                                        (forwardDelta * terrainMovementMultiplier);
             lastAppliedForwardDistance = currentForwardDistance;
@@ -1576,17 +1623,36 @@ namespace Dexter.Spider
         private bool TrySampleTerrainHeight(Vector3 worldPosition, out float height)
         {
             height = 0f;
-            if (activeTerrain == null || activeTerrain.terrainData == null)
-                return false;
+            bool foundSurface = false;
+            if (activeTerrain != null && activeTerrain.terrainData != null)
+            {
+                Vector3 origin = activeTerrain.transform.position;
+                Vector3 size = activeTerrain.terrainData.size;
+                if (worldPosition.x >= origin.x && worldPosition.x <= origin.x + size.x &&
+                    worldPosition.z >= origin.z && worldPosition.z <= origin.z + size.z)
+                {
+                    height = activeTerrain.SampleHeight(worldPosition) + origin.y;
+                    foundSurface = true;
+                }
+            }
 
-            Vector3 origin = activeTerrain.transform.position;
-            Vector3 size = activeTerrain.terrainData.size;
-            if (worldPosition.x < origin.x || worldPosition.x > origin.x + size.x ||
-                worldPosition.z < origin.z || worldPosition.z > origin.z + size.z)
-                return false;
+            // Terrain sampling does not cover mesh ground, collider-only
+            // terrain, or points just outside the TerrainData bounds. Use a
+            // downward ray as a safe fallback so IK feet cannot pass through
+            // the actual surface.
+            Vector3 rayOrigin = worldPosition + Vector3.up * 2f;
+            if (Physics.Raycast(rayOrigin, Vector3.down, out RaycastHit hit,
+                6f, obstacleLayers, QueryTriggerInteraction.Ignore))
+            {
+                // Prefer the highest valid surface: on a climb this keeps a
+                // foot from using a lower TerrainData sample when a mesh
+                // collider or raised terrain surface is underneath it.
+                if (!foundSurface || hit.point.y > height)
+                    height = hit.point.y;
+                foundSurface = true;
+            }
 
-            height = activeTerrain.SampleHeight(worldPosition) + origin.y;
-            return true;
+            return foundSurface;
         }
 
         private void UpdateSideGait(
@@ -1904,17 +1970,115 @@ namespace Dexter.Spider
                 }
                 Vector3 rigForward = Vector3.ProjectOnPlane(
                     rigSpace.forward, Vector3.up).normalized;
-                Vector3 pushOffset = -rigForward * pushDistance;
+                float stancePush = pushDistance;
+                if (!leftSideWaveInPlace && !rightSideWaveInPlace)
+                {
+                    float phase = isLeftSide
+                        ? leftGaitPhase
+                        : Mathf.Repeat(rightGaitPhase + 0.5f, 1f);
+                    float groupOffset = i == 1 || i == 3 ? 0.5f : 0f;
+                    float stancePhase = Mathf.Repeat(phase + groupOffset, 1f);
+                    bool planted = stancePhase >= swingPhaseFraction;
+                    if (planted)
+                    {
+                        // The foot loads gradually through stance, like a
+                        // lightly tensioned spring, then resets during swing.
+                        stancePush *= walkingPushEmphasis;
+                    }
+                    else
+                    {
+                        stancePush *= 0.08f;
+                    }
+                }
+                Vector3 pushOffset = -rigForward * stancePush;
                 Vector3 solvedTarget = leg.WorldTarget + outward * radialAmount +
                                        Vector3.up * directFingerLift *
-                                       (i == 0 ? frontLegMimicLiftMultiplier : 1f) +
+                                       (i == 0 ? frontLegMimicLiftMultiplier : 1f) *
+                                       1f +
                                        pushOffset;
+                solvedTarget = ConstrainFootAgainstObstacles(
+                    leg, solvedTarget, obstacleSkin);
                 if (TrySampleTerrainHeight(solvedTarget, out float terrainHeight))
                     solvedTarget.y = Mathf.Max(
                         solvedTarget.y,
                         terrainHeight + leg.GroundClearance);
                 SolveCcd(leg, solvedTarget);
+                if (TrySampleTerrainHeight(leg.Effector.position, out float solvedGround))
+                {
+                    float penetration = solvedGround + leg.GroundClearance -
+                                         leg.Effector.position.y;
+                    if (penetration > 0.001f)
+                    {
+                        // CCD can stop short when a climbing leg reaches its
+                        // joint-angle limit. Re-solve from the measured foot
+                        // position rather than translating the chain, which
+                        // preserves leg lengths and prevents warping.
+                        SolveCcd(leg,
+                            solvedTarget + Vector3.up * penetration);
+                        if (TrySampleTerrainHeight(leg.Effector.position,
+                            out float finalGround))
+                        {
+                            float finalPenetration = finalGround +
+                                leg.GroundClearance - leg.Effector.position.y;
+                            if (finalPenetration > 0f)
+                                // This is the hard final invariant: after all
+                                // IK work, a foot may never remain below the
+                                // measured surface, regardless of how far
+                                // CCD stopped short.
+                                leg.Effector.position += Vector3.up *
+                                    finalPenetration;
+                        }
+                    }
+                }
+                ClampSolvedFootToGround(leg);
             }
+        }
+
+        private void ClampSolvedFootToGround(LegChain leg)
+        {
+            if (leg == null || leg.Effector == null ||
+                !TrySampleTerrainHeight(leg.Effector.position, out float ground))
+                return;
+            float penetration = ground + leg.GroundClearance -
+                                leg.Effector.position.y;
+            if (penetration > 0f)
+                leg.Effector.position += Vector3.up * penetration;
+        }
+
+        private Vector3 ConstrainFootAgainstObstacles(
+            LegChain leg, Vector3 desired, float skin)
+        {
+            if (leg == null || leg.Effector == null)
+                return desired;
+
+            Vector3 start = leg.Effector.position;
+            Vector3 delta = desired - start;
+            float distance = delta.magnitude;
+            if (distance < 0.001f)
+                return desired;
+
+            float radius = Mathf.Max(0.025f, skin * 1.5f);
+            RaycastHit[] hits = Physics.SphereCastAll(
+                start, radius, delta / distance, distance + skin,
+                obstacleLayers, QueryTriggerInteraction.Ignore);
+            float permitted = distance;
+            Vector3 normal = Vector3.zero;
+            for (int i = 0; i < hits.Length; i++)
+            {
+                Collider collider = hits[i].collider;
+                if (collider == null || collider.transform.IsChildOf(transform) ||
+                    IsSoftFoliageCollider(collider))
+                    continue;
+                if (hits[i].distance < permitted)
+                {
+                    permitted = Mathf.Max(0f, hits[i].distance - skin);
+                    normal = hits[i].normal;
+                }
+            }
+
+            if (permitted >= distance || normal.sqrMagnitude < 0.0001f)
+                return desired;
+            return start + delta.normalized * permitted + normal.normalized * skin;
         }
 
         private float GetTargetLegPushDistance(
@@ -1941,6 +2105,35 @@ namespace Dexter.Spider
             }
 
             return distance * gaitWeight;
+        }
+
+        private float GetPlantedPushDriveStrength()
+        {
+            if (!alternatingDriveAuthorized)
+                return 0f;
+
+            float leftStance = GetSidePlantedFraction(
+                leftGaitPhase, leftGaitWeight);
+            float rightStance = GetSidePlantedFraction(
+                rightGaitPhase, rightGaitWeight);
+            // Keep a small baseline during the transition between groups so
+            // forward motion remains continuous while the next feet plant.
+            return Mathf.Lerp(0.25f, 1f, (leftStance + rightStance) * 0.5f);
+        }
+
+        private float GetSidePlantedFraction(float phase, float gaitWeight)
+        {
+            if (gaitWeight <= 0.01f)
+                return 1f;
+
+            int planted = 0;
+            for (int row = 0; row < 4; row++)
+            {
+                float groupOffset = row == 1 || row == 3 ? 0.5f : 0f;
+                if (Mathf.Repeat(phase + groupOffset, 1f) >= swingPhaseFraction)
+                    planted++;
+            }
+            return planted / 4f;
         }
 
         private static void ResetWorldFootTargets(LegChain[] legs)
@@ -2050,6 +2243,9 @@ namespace Dexter.Spider
             gaitDirectionDeadZone = Mathf.Max(0f, gaitDirectionDeadZone);
             swingPhaseFraction = Mathf.Clamp(swingPhaseFraction, 0.2f, 0.6f);
             gaitBlendSpeed = Mathf.Max(0.01f, gaitBlendSpeed);
+            walkingLiftEmphasis = Mathf.Clamp(walkingLiftEmphasis, 1f, 3f);
+            walkingStrideEmphasis = Mathf.Clamp(walkingStrideEmphasis, 1f, 2f);
+            walkingPushEmphasis = Mathf.Clamp(walkingPushEmphasis, 1f, 3f);
             alternationForceThreshold = Mathf.Max(0f, alternationForceThreshold);
             alternationDominanceMargin = Mathf.Max(0f, alternationDominanceMargin);
             alternationReleaseThreshold = Mathf.Clamp(
@@ -2075,7 +2271,7 @@ namespace Dexter.Spider
             minimumStepSpeedMultiplier = Mathf.Clamp(
                 minimumStepSpeedMultiplier, 0.1f, 1f);
             maximumStepSpeedMultiplier = Mathf.Clamp(
-                maximumStepSpeedMultiplier, 1f, 4f);
+                maximumStepSpeedMultiplier, 1f, 6f);
             turnMinimumSpeedDisplacement = Mathf.Max(
                 turnActivationForce, turnMinimumSpeedDisplacement);
             turnForceForMaximumSpeed = Mathf.Max(
