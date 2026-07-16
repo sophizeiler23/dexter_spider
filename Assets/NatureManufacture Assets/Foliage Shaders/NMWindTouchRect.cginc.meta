@@ -1,0 +1,16 @@
+fileFormatVersion: 2
+guid: 0b275005887200042bbf14338507431f
+ShaderImporter:
+  externalObjects: {}
+  defaultTextures: []
+  nonModifiableTextures: []
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 132195
+  packageName: Meadow Environment - Dynamic Nature
+  packageVersion: 3.0.4
+  assetPath: Assets/NatureManufacture Assets/Foliage Shaders/NMWindTouchRect.cginc
+  uploadId: 885180

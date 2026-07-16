@@ -1,0 +1,17 @@
+fileFormatVersion: 2
+guid: d2e9c63e42ea27f408e42ae240e63f79
+timeCreated: 1538487408
+licenseType: Store
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 4300000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 132195
+  packageName: Meadow Environment - Dynamic Nature
+  packageVersion: 3.0.4
+  assetPath: Assets/NatureManufacture Assets/Meadow Environment Dynamic Nature/Trees/Models/02_Poplar_LOD0.asset
+  uploadId: 885180

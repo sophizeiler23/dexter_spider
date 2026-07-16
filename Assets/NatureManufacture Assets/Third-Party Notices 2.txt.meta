@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 000d8ed48f08d3b408b53e41c5b48490
+timeCreated: 1530708782
+licenseType: Store
+TextScriptImporter:
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 132195
+  packageName: Meadow Environment - Dynamic Nature
+  packageVersion: 3.0.4
+  assetPath: Assets/NatureManufacture Assets/Third-Party Notices 2.txt
+  uploadId: 885180

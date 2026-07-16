@@ -1,0 +1,16 @@
+fileFormatVersion: 2
+guid: 839bdc3011e43e34683d62152d2a10dc
+ShaderImporter:
+  externalObjects: {}
+  defaultTextures: []
+  nonModifiableTextures: []
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 132195
+  packageName: Meadow Environment - Dynamic Nature
+  packageVersion: 3.0.4
+  assetPath: Assets/NatureManufacture Assets/Foliage Shaders/Advanced Grass Standard.shader
+  uploadId: 885180
