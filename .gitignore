@@ -38,6 +38,10 @@ sysinfo.txt
 *.apk
 *.aab
 *.unitypackage
+# Meadow Environment support packs (shared via Git LFS)
+!Assets/NatureManufacture Assets/Meadow Environment Dynamic Nature/HD and URP Support Packs/*.unitypackage
+!Assets/NatureManufacture Assets/Meadow Environment Dynamic Nature/Third Party Support Files/*.unitypackage
+!Assets/NatureManufacture Assets/Meadow Environment Dynamic Nature/Demo Scenes/Vegetation Studio Standard Demo/*.unitypackage
 *.app
 
 # Operating system files
