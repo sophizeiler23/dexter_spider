@@ -29,16 +29,16 @@ namespace Dexter.Spider
                 // The base terrain is not foliage, even if its GameObject is
                 // named after a grass/meadow environment.
                 if (c is TerrainCollider) continue;
-                string n = c.name.ToLowerInvariant();
                 Transform t = c.transform;
                 while (t != null && t != transform)
                 {
-                    n += " " + t.name.ToLowerInvariant();
+                    string n = t.name.ToLowerInvariant();
+                    if (n.Contains("flower") || n.Contains("bush") ||
+                        n.Contains("shrub") || n.Contains("plant") ||
+                        n.Contains("foliage") || n.Contains("grass"))
+                        return Mathf.Min(result, foliageMovementMultiplier);
                     t = t.parent;
                 }
-                if (n.Contains("flower") || n.Contains("bush") || n.Contains("shrub") ||
-                    n.Contains("plant") || n.Contains("foliage") || n.Contains("grass"))
-                    return Mathf.Min(result, foliageMovementMultiplier);
             }
             return result;
         }

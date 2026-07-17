@@ -16,17 +16,43 @@ namespace Dexter.Spider
         [SerializeField, Min(0f)] private float maximumSlideSpeed = 0.4f;
         [Tooltip("Additional spider-like adhesion to the surface. Full effect requires a supported, balanced stance.")]
         [SerializeField, Range(0f, 1f)] private float stickySurfaceGrip = 0.2f;
+        [Tooltip("Small amount of drive retained while the next tetrapod group is planting. Lower values make the push-pull rhythm more pronounced.")]
+        [SerializeField, Range(0f, 1f)] private float minimumPlantedTraction = 0.35f;
+        [Tooltip("Shapes how quickly traction builds after the feet plant. Values above one emphasize the loaded push phase.")]
+        [SerializeField, Range(0.5f, 3f)] private float plantedTractionExponent = 1.35f;
+        [Tooltip("How quickly commanded walking speed builds while planted feet push.")]
+        [SerializeField, Min(0.01f)] private float walkingAcceleration = 5f;
+        [Tooltip("How quickly surface friction removes walking speed when the push ends or input is released.")]
+        [SerializeField, Min(0.01f)] private float walkingBrakingDeceleration = 12f;
 
         [Header("Terrain Movement")]
         [Tooltip("Walking speed retained on the configured steep slope angle.")]
         [SerializeField, Range(0.1f, 1f)] private float steepSlopeSpeedMultiplier = 0.45f;
         [SerializeField, Range(1f, 70f)] private float steepSlopeAngle = 38f;
 
+        [Header("Steep Surface Climbing")]
+        [Tooltip("Allows terrain heightmap walls to be treated as walkable surfaces instead of obstacles.")]
+        [SerializeField] private bool enableSteepSurfaceClimbing = true;
+        [Tooltip("Surface angle where the spider switches from normal slope handling to wall climbing.")]
+        [SerializeField, Range(20f, 85f)] private float climbStartAngle = 45f;
+        [Tooltip("Steepest terrain angle the spider can align to and climb.")]
+        [SerializeField, Range(45f, 89.9f)] private float maximumClimbAngle = 89.5f;
+        [Tooltip("Distance ahead used to detect a steep wall before the body reaches it.")]
+        [SerializeField, Min(0.05f)] private float climbSurfaceProbeDistance = 0.6f;
+        [Tooltip("Required agreement between a collider face and the TerrainData normal. This keeps tree trunks blocking.")]
+        [SerializeField, Range(0.25f, 1f)] private float climbNormalMatch = 0.7f;
+        [Tooltip("Extra gravity-cancelling adhesion on climbable walls. A value above one holds the spider against a near-vertical surface at rest.")]
+        [SerializeField, Range(1f, 2f)] private float steepSurfaceAdhesionMultiplier = 1.2f;
+        [Tooltip("Minimum fraction of wall adhesion retained even while the fingers are neutral.")]
+        [SerializeField, Range(0f, 1f)] private float minimumClimbGrip = 1f;
+        [Tooltip("Distance used to project each foot onto the active steep TerrainCollider face.")]
+        [SerializeField, Min(0.5f)] private float steepFootContactProbeDistance = 4f;
+
         [Header("Terrain Body Clearance")]
         [Tooltip("Distance from the body center used to sample front, back, left, and right terrain heights.")]
         [SerializeField, Min(0.05f)] private float bodyClearanceSampleRadius = 0.40f;
         [Tooltip("Extra vertical clearance above the highest terrain sample.")]
-        [SerializeField, Min(0f)] private float bodyClearanceSafetyMargin = 0.04f;
+        [SerializeField, Min(0f)] private float bodyClearanceSafetyMargin = 0.25f;
         [Tooltip("Maximum visual body alignment to the terrain slope.")]
         [SerializeField, Range(0f, 25f)] private float maximumSlopeAlignmentDegrees = 12f;
         [SerializeField, Min(0.01f)] private float slopeAlignmentResponse = 3f;
@@ -38,8 +64,10 @@ namespace Dexter.Spider
         [SerializeField, Min(0.01f)] private float fullSupportCapacityKg = 2.5f;
         [Tooltip("Center of mass relative to the authored body center: X is lateral, Y is vertical, Z is forward.")]
         [SerializeField] private Vector3 centerOfMassOffset = Vector3.zero;
-        [Tooltip("Small world-space distance the body settles while the spider is resting.")]
-        [SerializeField, Min(0f)] private float restingBodyDrop = 0.09f;
+        [Tooltip("World-space body drop retained both at rest and while walking.")]
+        [SerializeField, Min(0f)] private float restingBodyDrop = 0.76f;
+        [Tooltip("Keeps the visible torso above the sampled terrain surface.")]
+        [SerializeField, Min(0f)] private float torsoSurfaceClearance = 0.12f;
         [Tooltip("How quickly the body settles and rises without affecting locomotion.")]
         [SerializeField, Min(0.01f)] private float bodyHeightResponse = 3f;
         [Tooltip("Maximum body tip when one finger is moving faster than the other.")]
@@ -52,6 +80,7 @@ namespace Dexter.Spider
         [SerializeField, Min(0.01f)] private float balanceTipResponse = 3f;
 
         private Terrain activeTerrain;
+        private TerrainCollider activeTerrainCollider;
         private Vector3 environmentalVelocity;
         private float currentBodyDrop;
         private float currentBalanceTip;
@@ -75,6 +104,18 @@ namespace Dexter.Spider
                 float adhesionDeceleration = stickySurfaceGrip *
                                              currentGripStability *
                                              normalStrength;
+                if (IsClimbableNormal(groundNormal))
+                {
+                    // On a vertical wall groundNormal.y approaches zero, so
+                    // ordinary normal-force friction also approaches zero.
+                    // Spider adhesion is an active surface grip and must not
+                    // disappear with the gravitational normal force.
+                    float climbAdhesion = stickySurfaceGrip *
+                        Mathf.Max(currentGripStability, minimumClimbGrip) *
+                        gravityAcceleration * steepSurfaceAdhesionMultiplier;
+                    adhesionDeceleration = Mathf.Max(
+                        adhesionDeceleration, climbAdhesion);
+                }
                 environmentalVelocity = Vector3.MoveTowards(
                     environmentalVelocity,
                     Vector3.zero,
@@ -97,7 +138,8 @@ namespace Dexter.Spider
         public float GetMovementMultiplier(Vector3 worldPosition)
         {
             EnsureTerrain();
-            if (!TrySampleTerrainNormal(worldPosition, out Vector3 normal))
+            if (!TryGetTravelSurfaceNormal(
+                    worldPosition, Vector3.zero, out Vector3 normal))
                 return 1f;
 
             float slope = Vector3.Angle(normal, Vector3.up);
@@ -107,12 +149,165 @@ namespace Dexter.Spider
                 Mathf.InverseLerp(0f, steepSlopeAngle, slope));
         }
 
+        public Vector3 GetSurfaceTravelDirection(
+            Vector3 worldPosition,
+            Vector3 intendedForward)
+        {
+            EnsureTerrain();
+            Vector3 planarForward = Vector3.ProjectOnPlane(
+                intendedForward, Vector3.up).normalized;
+            if (planarForward.sqrMagnitude < 0.0001f)
+                return intendedForward.normalized;
+            if (!TryGetTravelSurfaceNormal(
+                    worldPosition, planarForward, out Vector3 normal))
+                return planarForward;
+
+            // Building forward from a stable lateral axis remains well-defined
+            // when the surface is almost vertical. A direct projection of
+            // planarForward becomes nearly zero at 90 degrees and can suddenly
+            // choose a sideways direction at the rim of a trough.
+            Vector3 planarRight = Vector3.Cross(
+                Vector3.up, planarForward).normalized;
+            Vector3 surfaceRight = Vector3.ProjectOnPlane(
+                planarRight, normal).normalized;
+            if (surfaceRight.sqrMagnitude < 0.0001f)
+            {
+                Vector3 projectedForward = Vector3.ProjectOnPlane(
+                    planarForward, normal).normalized;
+                return projectedForward.sqrMagnitude > 0.0001f
+                    ? projectedForward
+                    : planarForward;
+            }
+
+            Vector3 surfaceForward = Vector3.Cross(
+                surfaceRight, normal).normalized;
+            Vector3 projectedDirection = Vector3.ProjectOnPlane(
+                planarForward, normal);
+            if (projectedDirection.sqrMagnitude > 0.000001f &&
+                Vector3.Dot(surfaceForward, projectedDirection) < 0f)
+                surfaceForward = -surfaceForward;
+            return surfaceForward;
+        }
+
+        public bool IsClimbableTerrainContact(
+            Vector3 worldPoint,
+            Vector3 colliderNormal)
+        {
+            EnsureTerrain();
+            if (!enableSteepSurfaceClimbing ||
+                !TrySampleTerrainNormal(worldPoint, out Vector3 terrainNormal) ||
+                !IsClimbableNormal(terrainNormal))
+                return false;
+            return Vector3.Dot(
+                terrainNormal, colliderNormal.normalized) >= climbNormalMatch;
+        }
+
+        /// <summary>
+        /// Returns a foot contact offset away from a steep Terrain surface
+        /// along its normal. Height-only grounding cannot plant a foot on a
+        /// near-vertical wall because world up is no longer the support axis.
+        /// </summary>
+        public bool TryGetClimbSurfaceContact(
+            Vector3 worldPosition,
+            float surfaceClearance,
+            out Vector3 contact,
+            out Vector3 surfaceNormal)
+        {
+            EnsureTerrain();
+            contact = worldPosition;
+            surfaceNormal = Vector3.up;
+            if (!TrySampleTerrainNormal(worldPosition, out surfaceNormal) ||
+                !IsClimbableNormal(surfaceNormal) ||
+                !TrySampleTerrainHeight(worldPosition, out float height))
+                return false;
+
+            Vector3 surfacePoint = new Vector3(
+                worldPosition.x, height, worldPosition.z);
+            contact = surfacePoint + surfaceNormal.normalized *
+                      Mathf.Max(0f, surfaceClearance);
+            return true;
+        }
+
+        public bool TryGetTerrainSurfaceFrame(
+            Vector3 worldPosition,
+            out Vector3 surfacePoint,
+            out Vector3 surfaceNormal)
+        {
+            EnsureTerrain();
+            surfacePoint = worldPosition;
+            surfaceNormal = Vector3.up;
+            if (!TrySampleTerrainNormal(worldPosition, out surfaceNormal) ||
+                !TrySampleTerrainHeight(worldPosition, out float height))
+                return false;
+            surfacePoint = new Vector3(
+                worldPosition.x, height, worldPosition.z);
+            return true;
+        }
+
+        public bool TryProjectFootToClimbSurface(
+            Vector3 desiredFootPosition,
+            Vector3 preferredSurfaceNormal,
+            float surfaceClearance,
+            out Vector3 contact,
+            out Vector3 surfaceNormal)
+        {
+            EnsureTerrain();
+            contact = desiredFootPosition;
+            surfaceNormal = preferredSurfaceNormal.normalized;
+            if (activeTerrainCollider == null ||
+                !IsClimbableNormal(surfaceNormal))
+                return false;
+
+            float probeDistance = Mathf.Max(
+                0.5f, steepFootContactProbeDistance);
+            Ray ray = new Ray(
+                desiredFootPosition + surfaceNormal * probeDistance,
+                -surfaceNormal);
+            if (!activeTerrainCollider.Raycast(
+                    ray, out RaycastHit hit, probeDistance * 2f))
+                return false;
+            if (Vector3.Dot(hit.normal, surfaceNormal) < climbNormalMatch)
+                return false;
+
+            surfaceNormal = hit.normal.normalized;
+            contact = hit.point + surfaceNormal *
+                      Mathf.Max(0f, surfaceClearance);
+            return true;
+        }
+
+        public bool IsClimbableSurfaceNormal(Vector3 surfaceNormal)
+        {
+            return IsClimbableNormal(surfaceNormal);
+        }
+
+        public float GetWalkingTractionMultiplier(float plantedPush)
+        {
+            float shapedPush = Mathf.Pow(
+                Mathf.Clamp01(plantedPush), plantedTractionExponent);
+            return Mathf.Lerp(minimumPlantedTraction, 1f, shapedPush);
+        }
+
+        public float MoveWalkingSpeed(
+            float currentSpeed,
+            float requestedSpeed,
+            float deltaTime)
+        {
+            float response = Mathf.Abs(requestedSpeed) < Mathf.Abs(currentSpeed)
+                ? walkingBrakingDeceleration
+                : walkingAcceleration;
+            return Mathf.MoveTowards(
+                currentSpeed, requestedSpeed, response * deltaTime);
+        }
+
         public Quaternion GetSlopeAlignedRootRotation(
             Vector3 worldPosition,
             Quaternion currentRotation)
         {
             EnsureTerrain();
-            if (!TrySampleTerrainNormal(worldPosition, out Vector3 normal))
+            Vector3 planarForward = Vector3.ProjectOnPlane(
+                currentRotation * Vector3.forward, Vector3.up).normalized;
+            if (!TryGetTravelSurfaceNormal(
+                    worldPosition, planarForward, out Vector3 normal))
             {
                 currentTerrainTilt = Quaternion.Slerp(
                     currentTerrainTilt,
@@ -121,10 +316,15 @@ namespace Dexter.Spider
                 return currentRotation;
             }
 
+            float slope = Vector3.Angle(normal, Vector3.up);
+            float alignmentLimit = enableSteepSurfaceClimbing &&
+                                   slope >= climbStartAngle
+                ? maximumClimbAngle
+                : maximumSlopeAlignmentDegrees;
             Vector3 limitedUp = Vector3.RotateTowards(
                 Vector3.up,
                 normal,
-                maximumSlopeAlignmentDegrees * Mathf.Deg2Rad,
+                alignmentLimit * Mathf.Deg2Rad,
                 0f);
             Quaternion targetTilt = Quaternion.FromToRotation(
                 Vector3.up, limitedUp);
@@ -145,6 +345,22 @@ namespace Dexter.Spider
             requiredHeight = worldPosition.y;
             Vector3 forward = Vector3.ProjectOnPlane(rigForward, Vector3.up).normalized;
             Vector3 right = Vector3.ProjectOnPlane(rigRight, Vector3.up).normalized;
+            if (TryGetTravelSurfaceNormal(
+                    worldPosition, forward, out Vector3 climbNormal) &&
+                IsClimbableNormal(climbNormal))
+            {
+                // On a wall, sampling ahead finds a much higher point and used
+                // to elevator the body upward before the legs could step. The
+                // center sample follows the actual surface as forward movement
+                // advances into the wall.
+                if (!TrySampleTerrainHeight(
+                        worldPosition, out float centerSurfaceHeight))
+                    return false;
+                requiredHeight = centerSurfaceHeight +
+                                 authoredGroundClearance +
+                                 bodyClearanceSafetyMargin;
+                return true;
+            }
             Vector3[] offsets =
             {
                 Vector3.zero,
@@ -170,6 +386,64 @@ namespace Dexter.Spider
             return foundTerrain;
         }
 
+        private bool TryGetTravelSurfaceNormal(
+            Vector3 worldPosition,
+            Vector3 planarForward,
+            out Vector3 normal)
+        {
+            normal = Vector3.up;
+            bool foundCurrent = TrySampleTerrainNormal(
+                worldPosition, out Vector3 currentNormal);
+            // Once the body is on a steep face, that contact owns orientation.
+            // Looking across a narrow trough can otherwise select the normal
+            // from the opposite wall.
+            if (foundCurrent && IsClimbableNormal(currentNormal))
+            {
+                normal = currentNormal;
+                return true;
+            }
+
+            if (enableSteepSurfaceClimbing &&
+                planarForward.sqrMagnitude > 0.0001f)
+            {
+                Vector3 probePosition = worldPosition +
+                    planarForward.normalized * climbSurfaceProbeDistance;
+                if (TrySampleTerrainNormal(
+                        probePosition, out Vector3 probeNormal) &&
+                    IsClimbableNormal(probeNormal))
+                {
+                    bool hasCurrentHeight = TrySampleTerrainHeight(
+                        worldPosition, out float currentHeight);
+                    bool hasProbeHeight = TrySampleTerrainHeight(
+                        probePosition, out float probeHeight);
+                    // Anticipate an uphill wall so the legs can reach for it,
+                    // but do not rotate down a drop until the body has crossed
+                    // the lip. This prevents root-height correction from
+                    // cancelling all horizontal progress at a descent.
+                    bool probeIsUphill = !hasCurrentHeight || !hasProbeHeight ||
+                                         probeHeight > currentHeight + 0.01f;
+                    if (probeIsUphill)
+                    {
+                        normal = probeNormal;
+                        return true;
+                    }
+                }
+            }
+
+            if (!foundCurrent)
+                return false;
+            normal = currentNormal;
+            return true;
+        }
+
+        private bool IsClimbableNormal(Vector3 normal)
+        {
+            float angle = Vector3.Angle(normal, Vector3.up);
+            return enableSteepSurfaceClimbing &&
+                   angle >= climbStartAngle &&
+                   angle <= maximumClimbAngle;
+        }
+
         public void ResetForces()
         {
             environmentalVelocity = Vector3.zero;
@@ -181,11 +455,11 @@ namespace Dexter.Spider
         }
 
         /// <summary>
-        /// Applies a bounded visual weight offset after IK has finished. Because
-        /// the controller restores the authored pose before the next solve, this
-        /// cannot accumulate or feed back into locomotion.
+        /// Applies a bounded visual weight offset before IK. The body is the
+        /// parent of the leg chains, so the legs must solve from this final body
+        /// pose or their feet will be lifted away from the ground afterward.
         /// </summary>
-        public void ApplyBodyWeightAfterIk(
+        public void ApplyBodyWeightBeforeIk(
             Transform body,
             Vector3 restLocalPosition,
             Quaternion restLocalRotation,
@@ -197,15 +471,15 @@ namespace Dexter.Spider
             if (body == null)
                 return;
 
-            // Gravity wins at zero support. Matching, sustained finger motion
-            // supplies the virtual string tension needed to reach full height.
+            // Finger support still controls surface grip and balance, but it no
+            // longer raises the torso. The user-authored low body height is held
+            // consistently at rest and throughout the walking cycle.
             float supportedFraction = Mathf.Clamp01(
                 totalVirtualSupport * fullSupportCapacityKg / bodyMassKg);
             currentGripStability = supportedFraction *
                 (1f - 0.5f * Mathf.Clamp01(
                     Mathf.Abs(normalizedCadenceImbalance)));
-            float targetDrop = restingBodyDrop *
-                               (1f - supportedFraction);
+            float targetDrop = restingBodyDrop;
             float massResponse = Mathf.Clamp(
                 fullSupportCapacityKg / bodyMassKg, 0.25f, 4f);
             currentBodyDrop = Mathf.MoveTowards(
@@ -213,8 +487,13 @@ namespace Dexter.Spider
                 targetDrop,
                 bodyHeightResponse * restingBodyDrop * massResponse * Time.deltaTime);
 
+            Vector3 supportUp = (currentTerrainTilt * Vector3.up).normalized;
+            bool isOnSteepClimb = Vector3.Angle(
+                supportUp, Vector3.up) >= climbStartAngle;
+            if (!isOnSteepClimb)
+                supportUp = Vector3.up;
             Vector3 safeRight = Vector3.ProjectOnPlane(
-                rigRightWorld, Vector3.up).normalized;
+                rigRightWorld, supportUp).normalized;
             float lateralCenterBias = maximumBalanceShift > 0.0001f
                 ? centerOfMassOffset.x / maximumBalanceShift
                 : 0f;
@@ -228,7 +507,14 @@ namespace Dexter.Spider
                  lateralCenterBias) * centerHeightLeverage,
                 -1f,
                 1f);
-            Vector3 worldOffset = -Vector3.up * currentBodyDrop -
+            // The low resting posture is a vertical-ground pose. Applying its
+            // drop along a near-vertical wall normal pulls the visible torso
+            // into the wall. A climbing torso therefore keeps only its outward
+            // clearance until the root has transitioned back to normal ground.
+            float supportOffset = isOnSteepClimb
+                ? torsoSurfaceClearance
+                : torsoSurfaceClearance - currentBodyDrop;
+            Vector3 worldOffset = supportUp * supportOffset -
                                   safeRight * weightedImbalance * maximumBalanceShift;
             float targetTip = weightedImbalance *
                               maximumBalanceTipDegrees;
@@ -252,9 +538,9 @@ namespace Dexter.Spider
                 balanceTipResponse * maximumBalanceTipDegrees * Time.deltaTime);
             body.localRotation = restLocalRotation;
             Vector3 safeForward = Vector3.ProjectOnPlane(
-                rigForwardWorld, Vector3.up).normalized;
+                rigForwardWorld, supportUp).normalized;
             Vector3 safeBodyRight = Vector3.ProjectOnPlane(
-                rigRightWorld, Vector3.up).normalized;
+                rigRightWorld, supportUp).normalized;
             if (safeForward.sqrMagnitude > 0.0001f)
                 body.rotation = Quaternion.AngleAxis(
                     currentBalanceTip, safeForward) * body.rotation;
@@ -266,10 +552,18 @@ namespace Dexter.Spider
         private void EnsureTerrain()
         {
             if (activeTerrain != null)
+            {
+                if (activeTerrainCollider == null)
+                    activeTerrainCollider =
+                        activeTerrain.GetComponent<TerrainCollider>();
                 return;
+            }
             activeTerrain = Terrain.activeTerrain;
             if (activeTerrain == null)
-                activeTerrain = FindFirstObjectByType<Terrain>();
+                activeTerrain = FindAnyObjectByType<Terrain>();
+            if (activeTerrain != null)
+                activeTerrainCollider =
+                    activeTerrain.GetComponent<TerrainCollider>();
         }
 
         private bool TrySampleTerrainNormal(Vector3 worldPosition, out Vector3 normal)
@@ -315,15 +609,33 @@ namespace Dexter.Spider
             groundFrictionCoefficient = Mathf.Max(0f, groundFrictionCoefficient);
             maximumSlideSpeed = Mathf.Max(0f, maximumSlideSpeed);
             stickySurfaceGrip = Mathf.Clamp01(stickySurfaceGrip);
+            minimumPlantedTraction = Mathf.Clamp01(minimumPlantedTraction);
+            plantedTractionExponent = Mathf.Clamp(
+                plantedTractionExponent, 0.5f, 3f);
+            walkingAcceleration = Mathf.Max(0.01f, walkingAcceleration);
+            walkingBrakingDeceleration = Mathf.Max(
+                0.01f, walkingBrakingDeceleration);
             bodyMassKg = Mathf.Max(0.01f, bodyMassKg);
             fullSupportCapacityKg = Mathf.Max(0.01f, fullSupportCapacityKg);
             steepSlopeSpeedMultiplier = Mathf.Clamp(
                 steepSlopeSpeedMultiplier, 0.1f, 1f);
             steepSlopeAngle = Mathf.Clamp(steepSlopeAngle, 1f, 70f);
+            climbStartAngle = Mathf.Clamp(climbStartAngle, 20f, 85f);
+            maximumClimbAngle = Mathf.Clamp(
+                maximumClimbAngle, climbStartAngle, 89.9f);
+            climbSurfaceProbeDistance = Mathf.Max(
+                0.05f, climbSurfaceProbeDistance);
+            climbNormalMatch = Mathf.Clamp(climbNormalMatch, 0.25f, 1f);
+            steepSurfaceAdhesionMultiplier = Mathf.Clamp(
+                steepSurfaceAdhesionMultiplier, 1f, 2f);
+            minimumClimbGrip = Mathf.Clamp01(minimumClimbGrip);
+            steepFootContactProbeDistance = Mathf.Max(
+                0.5f, steepFootContactProbeDistance);
             bodyClearanceSampleRadius = Mathf.Max(0.05f, bodyClearanceSampleRadius);
             bodyClearanceSafetyMargin = Mathf.Max(0f, bodyClearanceSafetyMargin);
             slopeAlignmentResponse = Mathf.Max(0.01f, slopeAlignmentResponse);
             restingBodyDrop = Mathf.Max(0f, restingBodyDrop);
+            torsoSurfaceClearance = Mathf.Max(0f, torsoSurfaceClearance);
             bodyHeightResponse = Mathf.Max(0.01f, bodyHeightResponse);
             maximumBalanceShift = Mathf.Max(0f, maximumBalanceShift);
             balanceTipResponse = Mathf.Max(0.01f, balanceTipResponse);

@@ -8,6 +8,7 @@ namespace Dexter.Spider
         [SerializeField] private float bodyRadius = 0.42f;
         [SerializeField] private float bodyHeight = 0.55f;
         [SerializeField] private float legRadius = 0.055f;
+        [SerializeField] private float footRadius = 0.09f;
 
         private void Awake() => Build();
 
@@ -31,6 +32,16 @@ namespace Dexter.Spider
                 leg.direction = 1;
                 leg.isTrigger = false;
                 Physics.IgnoreCollision(body, leg, true);
+
+                // Add a compact contact volume to the terminal leg bone so
+                // the foot tip cannot pass through the ground unnoticed.
+                if (child.childCount == 0 && child.GetComponent<SphereCollider>() == null)
+                {
+                    SphereCollider foot = child.gameObject.AddComponent<SphereCollider>();
+                    foot.radius = footRadius;
+                    foot.isTrigger = false;
+                    Physics.IgnoreCollision(body, foot, true);
+                }
             }
         }
     }
