@@ -44,6 +44,8 @@ namespace Dexter.Spider.EditorTools
         private const string ForwardTurnEndKey = "Dexter.Spider.ForwardTurnEnd";
         private const string ForwardTurnForceKey = "Dexter.Spider.ForwardTurnForce";
         private const string WallAscentTeleportKey = "Dexter.Spider.WallAscentTeleport";
+        private const string SyntheticReceiverDisabledKey =
+            "Dexter.Spider.SyntheticReceiverDisabled";
 
         static SpiderPlayModeCapture()
         {
@@ -82,9 +84,7 @@ namespace Dexter.Spider.EditorTools
             stopAt = -1;
             captureTimerRunning = false;
             forwardWalkRunning = false;
-            if (syntheticReceiver != null)
-                syntheticReceiver.enabled = true;
-            syntheticReceiver = null;
+            RestorePhysicalReceiverAfterSyntheticTest();
             EditorApplication.isPlaying = false;
         }
 
@@ -260,7 +260,7 @@ namespace Dexter.Spider.EditorTools
                 stopAt = -1;
                 captureTimerRunning = false;
                 forwardWalkRunning = false;
-                syntheticReceiver = null;
+                RestorePhysicalReceiverAfterSyntheticTest();
                 EditorApplication.isPlaying = false;
                 Debug.Log("Spider capture stopped; screenshots and CSV were saved.");
             }
@@ -278,7 +278,7 @@ namespace Dexter.Spider.EditorTools
                 SessionState.SetBool(ForwardWalkPendingKey, false);
                 SessionState.SetBool(WallAscentTeleportKey, false);
                 forwardWalkRunning = false;
-                syntheticReceiver = null;
+                RestorePhysicalReceiverAfterSyntheticTest();
                 if (openCaptureRequested)
                 {
                     SessionState.SetBool(OpenCapturePendingKey, false);
@@ -303,7 +303,11 @@ namespace Dexter.Spider.EditorTools
                 stopAt = EditorApplication.timeSinceStartup +
                     SessionState.GetFloat(CaptureDurationKey, 5f);
                 captureTimerRunning = true;
+                return;
             }
+
+            if (state == PlayModeStateChange.EnteredPlayMode)
+                RestorePhysicalReceiverAfterSyntheticTest();
         }
 
         private static void BeginSyntheticForwardWalk()
@@ -329,7 +333,10 @@ namespace Dexter.Spider.EditorTools
             syntheticSequence = 0;
             syntheticReceiver = Object.FindAnyObjectByType<DexterRelayUdpReceiver>();
             if (syntheticReceiver != null)
+            {
+                SessionState.SetBool(SyntheticReceiverDisabledKey, true);
                 syntheticReceiver.enabled = false;
+            }
             if (SessionState.GetBool(WallAscentTeleportKey, false))
                 PrepareWallAscentStart();
         }
@@ -429,6 +436,33 @@ namespace Dexter.Spider.EditorTools
                 channels = 2,
                 has_data = true
             };
+        }
+
+        private static void RestorePhysicalReceiverAfterSyntheticTest()
+        {
+            if (!SessionState.GetBool(SyntheticReceiverDisabledKey, false) &&
+                syntheticReceiver == null)
+                return;
+
+            if (syntheticReceiver != null)
+                syntheticReceiver.enabled = true;
+
+            // SessionState survives assembly/domain reloads while the cached
+            // component reference does not. Find the scene receiver as a
+            // fallback so a synthetic test can never leave real Dexter input
+            // disabled for the user's next Play run.
+            DexterRelayUdpReceiver[] receivers =
+                Object.FindObjectsByType<DexterRelayUdpReceiver>(
+                    FindObjectsInactive.Include,
+                    FindObjectsSortMode.None);
+            foreach (DexterRelayUdpReceiver receiver in receivers)
+            {
+                if (receiver != null && receiver.gameObject.activeInHierarchy)
+                    receiver.enabled = true;
+            }
+
+            SessionState.SetBool(SyntheticReceiverDisabledKey, false);
+            syntheticReceiver = null;
         }
 
         private static void ProcessExternalCommand()

@@ -481,10 +481,14 @@ namespace Dexter.Spider
 
         private void OnGUI()
         {
+            bool waitingForDevice = waitingForDexterMovementCalibration &&
+                (receiver == null || !receiver.HasRecentFrame ||
+                 !IsPhysicalDexterFrame(receiver.LatestFrame));
             bool showComplete = dexterMovementCalibrationComplete &&
                 Time.realtimeSinceStartup <=
                 dexterCalibrationCompleteMessageUntil;
-            if (!isDexterMovementCalibrating && !showComplete)
+            if (!waitingForDevice && !isDexterMovementCalibrating &&
+                !showComplete)
                 return;
 
             float panelWidth = Mathf.Min(620f, Screen.width - 40f);
@@ -511,7 +515,20 @@ namespace Dexter.Spider
                 normal = { textColor = Color.white }
             };
 
-            if (isDexterMovementCalibrating)
+            if (waitingForDevice)
+            {
+                GUI.Label(
+                    new Rect(panel.x + 20f, panel.y + 12f,
+                        panel.width - 40f, 42f),
+                    "WAITING FOR DEXTER",
+                    titleStyle);
+                GUI.Label(
+                    new Rect(panel.x + 30f, panel.y + 58f,
+                        panel.width - 60f, 72f),
+                    "No live Dexter force frames are arriving yet. Check the device/relay connection; calibration will begin automatically when data arrives.",
+                    messageStyle);
+            }
+            else if (isDexterMovementCalibrating)
             {
                 float elapsed = Mathf.Max(
                     0f,
