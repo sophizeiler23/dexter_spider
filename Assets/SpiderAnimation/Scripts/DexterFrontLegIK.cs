@@ -5,6 +5,7 @@ using System.IO;
 using System.Text;
 using Dexter.Visualize;
 using UnityEngine;
+using UnityEngine.Serialization;
 
 namespace Dexter.Spider
 {
@@ -25,15 +26,19 @@ namespace Dexter.Spider
         [SerializeField] private bool tareOnEnable;
         [SerializeField, Min(0.25f)] private float calibrationDurationSeconds = 10f;
 
-        [Header("Dexter Active Movement Calibration")]
-        [Tooltip("When physical Dexter raw samples are detected, pause movement and learn a comfortable walking force from the first calibration period. iPad/editor input is unaffected.")]
-        [SerializeField] private bool calibrateDexterMovementOnStart = true;
-        [Tooltip("Percentile of the recorded walking-strength samples used as the normal Dexter walking force. A middle percentile ignores brief peaks while remaining responsive.")]
-        [SerializeField, Range(0.25f, 0.8f)] private float dexterCalibrationReferencePercentile = 0.45f;
-        [Tooltip("Safety floor for a learned Dexter reference so an accidental no-input calibration cannot amplify sensor noise.")]
-        [SerializeField, Min(0.01f)] private float minimumDexterCalibrationForce = 0.1f;
-        [Tooltip("Physical Dexter force needed for maximum walking and turning speed, as a multiple of the learned normal force. Lower values are more sensitive.")]
-        [SerializeField, Range(1.05f, 6f)] private float dexterMaximumSpeedForceMultiplier = 1.2f;
+        [Header("iPad Active Movement Calibration")]
+        [Tooltip("When iPad position frames are detected, pause movement and learn a comfortable walking displacement during the first calibration period. Physical Dexter/editor input is unaffected.")]
+        [FormerlySerializedAs("calibrateDexterMovementOnStart")]
+        [SerializeField] private bool calibrateIpadMovementOnStart = true;
+        [Tooltip("Percentile of the recorded walking displacements used as the normal iPad movement. A middle percentile ignores brief peaks while remaining responsive.")]
+        [FormerlySerializedAs("dexterCalibrationReferencePercentile")]
+        [SerializeField, Range(0.25f, 0.8f)] private float ipadCalibrationReferencePercentile = 0.45f;
+        [Tooltip("Safety floor in post-scaled iPad displacement units. The relay multiplies centimeters by 5, so 5 corresponds to 1 cm.")]
+        [FormerlySerializedAs("minimumDexterCalibrationForce")]
+        [SerializeField, Min(0.01f)] private float minimumIpadCalibrationDisplacement = 5f;
+        [Tooltip("iPad displacement needed for maximum walking and turning speed, as a multiple of the learned normal displacement. Lower values are more sensitive.")]
+        [FormerlySerializedAs("dexterMaximumSpeedForceMultiplier")]
+        [SerializeField, Range(1.05f, 6f)] private float ipadMaximumSpeedDisplacementMultiplier = 1.2f;
 
         [Header("Diagnostics")]
         [Tooltip("Writes one CSV row per unique Dexter frame with raw input and solved foot positions.")]
@@ -333,20 +338,20 @@ namespace Dexter.Spider
         private long lastTracedSequence = long.MinValue;
         private int unflushedTraceRows;
         private string traceFilePath;
-        private readonly List<float> dexterMovementCalibrationSamples =
+        private readonly List<float> ipadMovementCalibrationSamples =
             new List<float>(1024);
-        private bool waitingForDexterMovementCalibration;
-        private bool isDexterMovementCalibrating;
-        private bool dexterMovementCalibrationComplete;
-        private float dexterMovementCalibrationStart = -1f;
-        private float dexterCalibrationCompleteMessageUntil = -1f;
-        private float calibratedDexterReferenceForce = 1f;
-        private long lastDexterMovementCalibrationSequence = long.MinValue;
+        private bool waitingForIpadMovementCalibration;
+        private bool isIpadMovementCalibrating;
+        private bool ipadMovementCalibrationComplete;
+        private float ipadMovementCalibrationStart = -1f;
+        private float ipadCalibrationCompleteMessageUntil = -1f;
+        private float calibratedIpadReferenceDisplacement = 5f;
+        private long lastIpadMovementCalibrationSequence = long.MinValue;
 
         public bool IsReceiving => receiver != null && receiver.HasRecentFrame;
         public bool IsTaring => isTaring;
-        public bool IsDexterMovementCalibrating =>
-            isDexterMovementCalibrating;
+        public bool IsIpadMovementCalibrating =>
+            isIpadMovementCalibrating;
         public float ForwardSpeed => forwardSpeed;
         public string TraceFilePath => traceFilePath;
 
@@ -360,27 +365,27 @@ namespace Dexter.Spider
             if (!initialized || body == null ||
                 leftLegs == null || rightLegs == null)
                 InitializeRig();
-            PrepareDexterMovementCalibration();
-            if (tareOnEnable && !calibrateDexterMovementOnStart)
+            PrepareIpadMovementCalibration();
+            if (tareOnEnable && !calibrateIpadMovementOnStart)
                 BeginTare();
             else
                 UseUntaredRelayDefaults();
             BeginDiagnosticTrace();
         }
 
-        private void PrepareDexterMovementCalibration()
+        private void PrepareIpadMovementCalibration()
         {
-            waitingForDexterMovementCalibration =
-                calibrateDexterMovementOnStart;
-            isDexterMovementCalibrating = false;
-            dexterMovementCalibrationComplete = false;
-            dexterMovementCalibrationStart = -1f;
-            dexterCalibrationCompleteMessageUntil = -1f;
-            lastDexterMovementCalibrationSequence = long.MinValue;
-            dexterMovementCalibrationSamples.Clear();
-            calibratedDexterReferenceForce = Mathf.Max(
-                minimumDexterCalibrationForce,
-                minimumSpeedDisplacement / 5f);
+            waitingForIpadMovementCalibration =
+                calibrateIpadMovementOnStart;
+            isIpadMovementCalibrating = false;
+            ipadMovementCalibrationComplete = false;
+            ipadMovementCalibrationStart = -1f;
+            ipadCalibrationCompleteMessageUntil = -1f;
+            lastIpadMovementCalibrationSequence = long.MinValue;
+            ipadMovementCalibrationSamples.Clear();
+            calibratedIpadReferenceDisplacement = Mathf.Max(
+                minimumIpadCalibrationDisplacement,
+                minimumSpeedDisplacement);
         }
 
         private void UseUntaredRelayDefaults()
@@ -429,7 +434,7 @@ namespace Dexter.Spider
             RestoreLegPoses(rightLegs);
 
             UpdateTare();
-            UpdateDexterMovementCalibration();
+            UpdateIpadMovementCalibration();
             UpdateDisplacements();
 
             float leftVirtualSupport = Mathf.Clamp01(
@@ -481,13 +486,14 @@ namespace Dexter.Spider
 
         private void OnGUI()
         {
-            bool waitingForDevice = waitingForDexterMovementCalibration &&
+            bool waitingForDevice = waitingForIpadMovementCalibration &&
                 (receiver == null || !receiver.HasRecentFrame ||
-                 !IsPhysicalDexterFrame(receiver.LatestFrame));
-            bool showComplete = dexterMovementCalibrationComplete &&
+                 !IsIpadFrame(receiver.LatestFrame) ||
+                 !HasActiveIpadCalibrationFinger());
+            bool showComplete = ipadMovementCalibrationComplete &&
                 Time.realtimeSinceStartup <=
-                dexterCalibrationCompleteMessageUntil;
-            if (!waitingForDevice && !isDexterMovementCalibrating &&
+                ipadCalibrationCompleteMessageUntil;
+            if (!waitingForDevice && !isIpadMovementCalibrating &&
                 !showComplete)
                 return;
 
@@ -520,31 +526,31 @@ namespace Dexter.Spider
                 GUI.Label(
                     new Rect(panel.x + 20f, panel.y + 12f,
                         panel.width - 40f, 42f),
-                    "WAITING FOR DEXTER",
+                    "WAITING FOR iPAD",
                     titleStyle);
                 GUI.Label(
                     new Rect(panel.x + 30f, panel.y + 58f,
                         panel.width - 60f, 72f),
-                    "No live Dexter force frames are arriving yet. Check the device/relay connection; calibration will begin automatically when data arrives.",
+                    "Start the iPad relay and place a finger on either control. The 10-second displacement calibration will begin with the first active touch.",
                     messageStyle);
             }
-            else if (isDexterMovementCalibrating)
+            else if (isIpadMovementCalibrating)
             {
                 float elapsed = Mathf.Max(
                     0f,
                     Time.realtimeSinceStartup -
-                    dexterMovementCalibrationStart);
+                    ipadMovementCalibrationStart);
                 float remaining = Mathf.Max(
                     0f, calibrationDurationSeconds - elapsed);
                 GUI.Label(
                     new Rect(panel.x + 20f, panel.y + 12f,
                         panel.width - 40f, 42f),
-                    $"CALIBRATING DEXTER  {remaining:0.0}s",
+                    $"CALIBRATING iPAD  {remaining:0.0}s",
                     titleStyle);
                 GUI.Label(
                     new Rect(panel.x + 30f, panel.y + 58f,
                         panel.width - 60f, 72f),
-                    "Place your index and middle fingers in the device, then alternate them naturally as if you are walking.",
+                    "Place both fingers on the iPad, then alternate them through the displacement range you want to use for normal walking.",
                     messageStyle);
             }
             else
@@ -552,12 +558,12 @@ namespace Dexter.Spider
                 GUI.Label(
                     new Rect(panel.x + 20f, panel.y + 20f,
                         panel.width - 40f, 44f),
-                    "DEXTER CALIBRATION COMPLETE",
+                    "iPAD CALIBRATION COMPLETE",
                     titleStyle);
                 GUI.Label(
                     new Rect(panel.x + 30f, panel.y + 68f,
                         panel.width - 60f, 52f),
-                    $"Normal walking force: {calibratedDexterReferenceForce:0.00}",
+                    $"Normal walking displacement: {calibratedIpadReferenceDisplacement:0.00}",
                     messageStyle);
             }
         }
@@ -1070,37 +1076,38 @@ namespace Dexter.Spider
                 this);
         }
 
-        private void UpdateDexterMovementCalibration()
+        private void UpdateIpadMovementCalibration()
         {
-            if ((!waitingForDexterMovementCalibration &&
-                 !isDexterMovementCalibrating) || receiver == null)
+            if ((!waitingForIpadMovementCalibration &&
+                 !isIpadMovementCalibrating) || receiver == null)
                 return;
 
             DexterForceFrame frame = receiver.LatestFrame;
-            if (!IsPhysicalDexterFrame(frame) || !receiver.HasRecentFrame)
+            if (!IsIpadFrame(frame) || !receiver.HasRecentFrame ||
+                !HasActiveIpadCalibrationFinger())
                 return;
 
-            if (waitingForDexterMovementCalibration)
+            if (waitingForIpadMovementCalibration)
             {
-                waitingForDexterMovementCalibration = false;
-                isDexterMovementCalibrating = true;
-                dexterMovementCalibrationStart =
+                waitingForIpadMovementCalibration = false;
+                isIpadMovementCalibrating = true;
+                ipadMovementCalibrationStart =
                     Time.realtimeSinceStartup;
-                lastDexterMovementCalibrationSequence = long.MinValue;
-                dexterMovementCalibrationSamples.Clear();
+                lastIpadMovementCalibrationSequence = long.MinValue;
+                ipadMovementCalibrationSamples.Clear();
                 ResetInputStateForMovementCalibration();
             }
 
-            if (frame.sequence != lastDexterMovementCalibrationSequence)
+            if (frame.sequence != lastIpadMovementCalibrationSequence)
             {
-                lastDexterMovementCalibrationSequence = frame.sequence;
+                lastIpadMovementCalibrationSequence = frame.sequence;
                 float strongestY = 0f;
-                bool hasForce = false;
+                bool hasDisplacement = false;
                 if (TryReadForce(
                         leftLegFinger, out Vector2 leftCalibrationForce))
                 {
                     strongestY = Mathf.Abs(leftCalibrationForce.y);
-                    hasForce = true;
+                    hasDisplacement = true;
                 }
                 if (TryReadForce(
                         rightLegFinger, out Vector2 rightCalibrationForce))
@@ -1108,53 +1115,53 @@ namespace Dexter.Spider
                     strongestY = Mathf.Max(
                         strongestY,
                         Mathf.Abs(rightCalibrationForce.y));
-                    hasForce = true;
+                    hasDisplacement = true;
                 }
 
-                if (hasForce && !float.IsNaN(strongestY) &&
+                if (hasDisplacement && !float.IsNaN(strongestY) &&
                     !float.IsInfinity(strongestY))
-                    dexterMovementCalibrationSamples.Add(strongestY);
+                    ipadMovementCalibrationSamples.Add(strongestY);
             }
 
             if (Time.realtimeSinceStartup -
-                dexterMovementCalibrationStart <
+                ipadMovementCalibrationStart <
                 calibrationDurationSeconds)
                 return;
 
-            CompleteDexterMovementCalibration();
+            CompleteIpadMovementCalibration();
         }
 
-        private void CompleteDexterMovementCalibration()
+        private void CompleteIpadMovementCalibration()
         {
-            if (dexterMovementCalibrationSamples.Count > 0)
+            if (ipadMovementCalibrationSamples.Count > 0)
             {
-                dexterMovementCalibrationSamples.Sort();
+                ipadMovementCalibrationSamples.Sort();
                 int sampleIndex = Mathf.RoundToInt(
-                    (dexterMovementCalibrationSamples.Count - 1) *
-                    dexterCalibrationReferencePercentile);
-                calibratedDexterReferenceForce = Mathf.Max(
-                    minimumDexterCalibrationForce,
-                    dexterMovementCalibrationSamples[
+                    (ipadMovementCalibrationSamples.Count - 1) *
+                    ipadCalibrationReferencePercentile);
+                calibratedIpadReferenceDisplacement = Mathf.Max(
+                    minimumIpadCalibrationDisplacement,
+                    ipadMovementCalibrationSamples[
                         Mathf.Clamp(sampleIndex, 0,
-                            dexterMovementCalibrationSamples.Count - 1)]);
+                            ipadMovementCalibrationSamples.Count - 1)]);
             }
             else
             {
-                calibratedDexterReferenceForce = Mathf.Max(
-                    minimumDexterCalibrationForce,
-                    minimumSpeedDisplacement / 5f);
+                calibratedIpadReferenceDisplacement = Mathf.Max(
+                    minimumIpadCalibrationDisplacement,
+                    minimumSpeedDisplacement);
             }
 
-            isDexterMovementCalibrating = false;
-            dexterMovementCalibrationComplete = true;
-            dexterCalibrationCompleteMessageUntil =
+            isIpadMovementCalibrating = false;
+            ipadMovementCalibrationComplete = true;
+            ipadCalibrationCompleteMessageUntil =
                 Time.realtimeSinceStartup + 1.5f;
             ResetInputStateForMovementCalibration();
             Debug.Log(
-                $"{nameof(DexterFrontLegIK)} active Dexter calibration " +
-                $"complete: normal walking force=" +
-                $"{calibratedDexterReferenceForce:F3}, " +
-                $"maximum-speed force=" +
+                $"{nameof(DexterFrontLegIK)} active iPad calibration " +
+                $"complete: normal walking displacement=" +
+                $"{calibratedIpadReferenceDisplacement:F3}, " +
+                $"maximum-speed displacement=" +
                 $"{GetActiveMaximumSpeedDisplacement():F3}.",
                 this);
         }
@@ -1192,40 +1199,43 @@ namespace Dexter.Spider
             ResetWorldFootTargets(rightLegs);
         }
 
-        private static bool IsPhysicalDexterFrame(DexterForceFrame frame)
+        private static bool IsIpadFrame(DexterForceFrame frame)
         {
             if (frame?.fingers == null)
                 return false;
 
             string transport = frame.transport ?? string.Empty;
-            if (transport.IndexOf(
-                    "ipad", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                transport.IndexOf(
-                    "editor", StringComparison.OrdinalIgnoreCase) >= 0)
-                return false;
-
-            return HasRawSamples(frame.fingers.index) ||
-                   HasRawSamples(frame.fingers.middle);
+            return transport.IndexOf(
+                "ipad", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
-        private static bool HasRawSamples(
+        private bool HasActiveIpadCalibrationFinger()
+        {
+            return HasActivePositionMeasurement(
+                       receiver?.GetFinger(leftLegFinger)) ||
+                   HasActivePositionMeasurement(
+                       receiver?.GetFinger(rightLegFinger));
+        }
+
+        private static bool HasActivePositionMeasurement(
             DexterFingerMeasurement measurement)
         {
-            return measurement?.raw != null && measurement.raw.Length > 0;
+            return measurement != null && measurement.has_data &&
+                   measurement.force != null && measurement.force.Length >= 2;
         }
 
-        private bool IsUsingCalibratedDexterInput()
+        private bool IsUsingCalibratedIpadInput()
         {
-            return dexterMovementCalibrationComplete &&
-                   IsPhysicalDexterFrame(receiver?.LatestFrame);
+            return ipadMovementCalibrationComplete &&
+                   IsIpadFrame(receiver?.LatestFrame);
         }
 
         private float GetActiveForceRangeScale()
         {
-            if (!IsUsingCalibratedDexterInput())
+            if (!IsUsingCalibratedIpadInput())
                 return 1f;
 
-            return calibratedDexterReferenceForce /
+            return calibratedIpadReferenceDisplacement /
                    Mathf.Max(0.001f, minimumSpeedDisplacement);
         }
 
@@ -1236,9 +1246,9 @@ namespace Dexter.Spider
 
         private float GetActiveMaximumSpeedDisplacement()
         {
-            return IsUsingCalibratedDexterInput()
-                ? calibratedDexterReferenceForce *
-                  dexterMaximumSpeedForceMultiplier
+            return IsUsingCalibratedIpadInput()
+                ? calibratedIpadReferenceDisplacement *
+                  ipadMaximumSpeedDisplacementMultiplier
                 : maximumSpeedDisplacement;
         }
 
@@ -1255,9 +1265,9 @@ namespace Dexter.Spider
 
         private float GetActiveTurnMaximumSpeedDisplacement()
         {
-            return IsUsingCalibratedDexterInput()
+            return IsUsingCalibratedIpadInput()
                 ? GetActiveTurnMinimumSpeedDisplacement() *
-                  dexterMaximumSpeedForceMultiplier
+                  ipadMaximumSpeedDisplacementMultiplier
                 : turnForceForMaximumSpeed;
         }
 
@@ -1275,7 +1285,7 @@ namespace Dexter.Spider
             Vector2 rightForce = Vector2.zero;
 
             if (receiver.HasRecentFrame && !IsTaring &&
-                !isDexterMovementCalibrating)
+                !isIpadMovementCalibrating)
             {
                 if (TryReadForce(leftLegFinger, out Vector2 measuredLeftForce))
                     leftForce = measuredLeftForce - (hasBaseline ? leftBaseline : Vector2.zero);
@@ -2821,12 +2831,12 @@ namespace Dexter.Spider
             rightLegFinger = DexterFinger.Middle;
             ApplyResponsiveMovementDefaults();
             calibrationDurationSeconds = Mathf.Max(0.25f, calibrationDurationSeconds);
-            dexterCalibrationReferencePercentile = Mathf.Clamp(
-                dexterCalibrationReferencePercentile, 0.25f, 0.8f);
-            minimumDexterCalibrationForce = Mathf.Max(
-                0.01f, minimumDexterCalibrationForce);
-            dexterMaximumSpeedForceMultiplier = Mathf.Clamp(
-                dexterMaximumSpeedForceMultiplier, 1.05f, 6f);
+            ipadCalibrationReferencePercentile = Mathf.Clamp(
+                ipadCalibrationReferencePercentile, 0.25f, 0.8f);
+            minimumIpadCalibrationDisplacement = Mathf.Max(
+                0.01f, minimumIpadCalibrationDisplacement);
+            ipadMaximumSpeedDisplacementMultiplier = Mathf.Clamp(
+                ipadMaximumSpeedDisplacementMultiplier, 1.05f, 6f);
             displacementPerNewton.x = Mathf.Max(0f, displacementPerNewton.x);
             displacementPerNewton.y = Mathf.Max(0f, displacementPerNewton.y);
             forceDeadZone = Mathf.Max(0f, forceDeadZone);
