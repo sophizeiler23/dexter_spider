@@ -128,6 +128,14 @@ namespace Dexter.Visualize
             StopReceiver();
             clientId = Guid.NewGuid().ToString("N");
             lastError = null;
+            serverHost = serverHost?.Trim();
+
+            if (string.IsNullOrEmpty(serverHost))
+            {
+                lastError = "Relay server host is empty.";
+                running = false;
+                return;
+            }
 
             try
             {
@@ -274,6 +282,7 @@ namespace Dexter.Visualize
 
         private void OnValidate()
         {
+            serverHost = serverHost?.Trim();
             serverPort = Mathf.Clamp(serverPort, 1, 65535);
             subscribeIntervalSeconds = Mathf.Max(0.25f, subscribeIntervalSeconds);
             staleAfterSeconds = Mathf.Max(0.25f, staleAfterSeconds);
