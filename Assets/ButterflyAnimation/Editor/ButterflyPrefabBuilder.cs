@@ -83,6 +83,35 @@ namespace Dexter.Butterfly.Editor
         {
             ConfigureNormalMap(TexturesFolder + "/body_normalmap.jpg");
             ConfigureNormalMap(TexturesFolder + "/wing_normalmap.jpg");
+            ConfigureAlphaMap(TexturesFolder + "/wing_alpha.jpg");
+        }
+
+        private static void ConfigureAlphaMap(string path)
+        {
+            TextureImporter importer = AssetImporter.GetAtPath(path) as TextureImporter;
+            if (importer == null)
+                return;
+
+            bool changed = false;
+            if (importer.sRGBTexture)
+            {
+                importer.sRGBTexture = false;
+                changed = true;
+            }
+
+            TextureImporterSettings settings = new();
+            importer.ReadTextureSettings(settings);
+            if (!settings.mipmapEnabled || !settings.mipMapsPreserveCoverage)
+            {
+                settings.mipmapEnabled = true;
+                settings.mipMapsPreserveCoverage = true;
+                settings.alphaTestReferenceValue = 0.5f;
+                importer.SetTextureSettings(settings);
+                changed = true;
+            }
+
+            if (changed)
+                importer.SaveAndReimport();
         }
 
         private static void ConfigureNormalMap(string path)
