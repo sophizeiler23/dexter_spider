@@ -44,6 +44,7 @@ namespace Dexter.Visualize
         };
 
         [SerializeField] private DexterRelayUdpReceiver receiver;
+        [SerializeField] private Dexter.Spider.DexterFrontLegIK frontLegIk;
         [SerializeField] private DisplayMode displayMode = DisplayMode.FullScreen;
         [SerializeField, Min(1f)] private float pixelsPerNewton = 55f;
         [SerializeField, Min(20f)] private float maximumArrowPixels = 175f;
@@ -68,6 +69,8 @@ namespace Dexter.Visualize
         {
             if (receiver == null)
                 receiver = GetComponent<DexterRelayUdpReceiver>();
+            if (frontLegIk == null)
+                frontLegIk = GetComponent<Dexter.Spider.DexterFrontLegIK>();
             circleTexture = CreateCircleTexture(32);
         }
 
@@ -88,6 +91,9 @@ namespace Dexter.Visualize
 
             if (displayMode == DisplayMode.EmbeddedPanel)
             {
+                if (frontLegIk != null && !frontLegIk.ShouldShowCalibrationHud)
+                    return;
+
                 DrawEmbeddedPanel(DexterSpiderHudLayout.ForcePanel);
                 return;
             }

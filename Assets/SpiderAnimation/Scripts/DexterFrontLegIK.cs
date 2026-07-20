@@ -352,6 +352,8 @@ namespace Dexter.Spider
         public bool IsTaring => isTaring;
         public bool IsIpadMovementCalibrating =>
             isIpadMovementCalibrating;
+        public bool ShouldShowCalibrationHud =>
+            calibrateIpadMovementOnStart && IsCalibrationHudVisible();
         public float ForwardSpeed => forwardSpeed;
         public string TraceFilePath => traceFilePath;
 
@@ -484,7 +486,7 @@ namespace Dexter.Spider
             WriteDiagnosticTraceRow();
         }
 
-        private void OnGUI()
+        private bool IsCalibrationHudVisible()
         {
             bool waitingForDevice = waitingForIpadMovementCalibration &&
                 (receiver == null || !receiver.HasRecentFrame ||
@@ -493,9 +495,22 @@ namespace Dexter.Spider
             bool showComplete = ipadMovementCalibrationComplete &&
                 Time.realtimeSinceStartup <=
                 ipadCalibrationCompleteMessageUntil;
-            if (!waitingForDevice && !isIpadMovementCalibrating &&
-                !showComplete)
+            return waitingForDevice || isIpadMovementCalibrating ||
+                showComplete;
+        }
+
+        private void OnGUI()
+        {
+            if (!ShouldShowCalibrationHud)
                 return;
+
+            bool waitingForDevice = waitingForIpadMovementCalibration &&
+                (receiver == null || !receiver.HasRecentFrame ||
+                 !IsRelayPositionFrame(receiver.LatestFrame) ||
+                 !HasActiveIpadCalibrationFinger());
+            bool showComplete = ipadMovementCalibrationComplete &&
+                Time.realtimeSinceStartup <=
+                ipadCalibrationCompleteMessageUntil;
 
             Rect panel = DexterSpiderHudLayout.CalibrationPanel;
             DrawRect(panel, new Color(0.08f, 0.09f, 0.12f, 0.92f));
