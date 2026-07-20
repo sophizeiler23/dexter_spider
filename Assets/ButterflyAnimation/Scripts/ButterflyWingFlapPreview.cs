@@ -3,7 +3,7 @@ using UnityEngine;
 namespace Dexter.Butterfly
 {
     /// <summary>
-    /// Simple procedural wing flap for previewing the rig before a real animation clip exists.
+    /// Procedural wing flap used at runtime. Supports slowing or pausing during rests.
     /// </summary>
     public sealed class ButterflyWingFlapPreview : MonoBehaviour
     {
@@ -18,6 +18,9 @@ namespace Dexter.Butterfly
         private Quaternion upperRightRest;
         private Quaternion lowerLeftRest;
         private Quaternion lowerRightRest;
+
+        public float FlapSpeedMultiplier { get; set; } = 1f;
+        public float FlapAngleMultiplier { get; set; } = 1f;
 
         private void Awake()
         {
@@ -47,7 +50,10 @@ namespace Dexter.Butterfly
 
         private void LateUpdate()
         {
-            float angle = Mathf.Sin(Time.time * flapSpeed) * flapAngle;
+            float speed = flapSpeed * FlapSpeedMultiplier;
+            float angle = speed <= 0.01f
+                ? 0f
+                : Mathf.Sin(Time.time * speed) * flapAngle * FlapAngleMultiplier;
 
             ApplyFlap(wingUpperLeft, upperLeftRest, angle);
             ApplyFlap(wingUpperRight, upperRightRest, -angle);

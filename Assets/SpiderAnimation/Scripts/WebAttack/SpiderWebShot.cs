@@ -27,7 +27,7 @@ namespace Dexter.Spider
         [Header("Net Phase")]
         [SerializeField, Min(0.1f)] private float defaultNetRadius = 0.6f;
         [SerializeField, Range(1f, 2.5f)] private float netRadiusPadding = 1.2f;
-        [SerializeField, Min(0.1f)] private float netExpandSpeed = 2.2f;
+        [SerializeField, Range(0.05f, 0.5f)] private float netExpandDuration = 0.18f;
         [SerializeField, Range(6, 28)] private int spokeCount = 18;
         [SerializeField, Range(3, 12)] private int ringCount = 8;
         [SerializeField, Range(0.2f, 1.2f)] private float ringSpacingPower = 0.55f;
@@ -187,10 +187,11 @@ namespace Dexter.Spider
 
         private void UpdateExpanding()
         {
+            float expandSpeed = activeNetRadius / Mathf.Max(0.05f, netExpandDuration);
             currentNetRadius = Mathf.MoveTowards(
                 currentNetRadius,
                 activeNetRadius,
-                netExpandSpeed * Time.deltaTime);
+                expandSpeed * Time.deltaTime);
 
             float expansion01 = activeNetRadius > 0.0001f
                 ? currentNetRadius / activeNetRadius
