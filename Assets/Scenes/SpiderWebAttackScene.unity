@@ -472,6 +472,9 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 6e022b4d6e99395318ff5a73686461be, type: 3}
       insertIndex: -1
       addedObject: {fileID: 1600001006}
+    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 6e022b4d6e99395318ff5a73686461be, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1600001007}
   m_SourcePrefab: {fileID: 100100000, guid: 6e022b4d6e99395318ff5a73686461be, type: 3}
 --- !u!1 &832575517
 GameObject:
@@ -775,6 +778,20 @@ MonoBehaviour:
   launchForwardOffset: 0.45
   cooldownSeconds: 0.8
   aimAtNearestPrey: 1
+--- !u!114 &1600001007
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1600001001}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4e8d0f7a6b2c4d1e9f3a5b7c8d0e1f24, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Dexter.Spider.SpiderMaterialVariant
+  bodyMaterial: {fileID: 2100000, guid: 9f6d8a0f4f0f4b4e9e6f7a2b1c3d5e70, type: 2}
+  legMaterial: {fileID: 2100000, guid: 3a7b1c9e5d2f4a6b8c0e1f3a5b7d9e20, type: 2}
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
