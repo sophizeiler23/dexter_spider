@@ -30,6 +30,8 @@ namespace Dexter.Spider
         [SerializeField, Min(0f)] private float lookAheadDistance = 0.65f;
         [Tooltip("Below this world-up projection the camera preserves its previous horizon instead of choosing an unstable new one.")]
         [SerializeField, Range(0.01f, 0.95f)] private float verticalHorizonThreshold = 0.25f;
+        [Tooltip("Maximum roll correction used after leaving a near-vertical view. This returns an inverted view upright without snapping.")]
+        [SerializeField, Min(1f)] private float uprightRecoveryDegreesPerSecond = 240f;
 
         [Header("Terrain-Aware Framing")]
         [Tooltip("Uses the terrain surface frame to keep the camera behind and outside the wall on steep terrain.")]
@@ -259,30 +261,48 @@ namespace Dexter.Spider
             Vector3 projectedWorldUp = Vector3.ProjectOnPlane(
                 Vector3.up, viewForward);
             float worldUpStrength = projectedWorldUp.magnitude;
-            Vector3 desiredUp = transportedUp;
-            if (worldUpStrength > 0.0001f)
+            if (worldUpStrength <= verticalHorizonThreshold)
             {
-                projectedWorldUp /= worldUpStrength;
-                if (Vector3.Dot(transportedUp, projectedWorldUp) < 0f)
-                    projectedWorldUp = -projectedWorldUp;
-
-                // Near a straight-up/down view, fade toward the transported
-                // horizon instead of allowing world-up to choose either side.
-                float horizonWeight = Mathf.SmoothStep(
-                    0f,
-                    1f,
-                    Mathf.InverseLerp(
-                        verticalHorizonThreshold,
-                        Mathf.Min(1f, verticalHorizonThreshold + 0.35f),
-                        worldUpStrength));
-                desiredUp = Vector3.Slerp(
-                    transportedUp, projectedWorldUp, horizonWeight).normalized;
+                // World-up has no reliable screen projection while looking
+                // almost exactly vertical. Preserve the transported horizon
+                // only inside this temporary dead zone.
+                cameraUp = transportedUp;
+                return cameraUp;
             }
 
-            float upBlend = 1f - Mathf.Exp(
+            // Outside the dead zone there is one canonical upright horizon.
+            // Never reverse it to agree with an inverted previous frame: that
+            // old hemisphere-preservation is what made a trip through the
+            // trough leave the camera permanently upside down.
+            projectedWorldUp /= worldUpStrength;
+            float reanchorWeight = Mathf.SmoothStep(
+                0f,
+                1f,
+                Mathf.InverseLerp(
+                    verticalHorizonThreshold,
+                    Mathf.Min(1f, verticalHorizonThreshold + 0.25f),
+                    worldUpStrength));
+            float signedCorrection = Vector3.SignedAngle(
+                transportedUp, projectedWorldUp, viewForward);
+            if (Vector3.Dot(transportedUp, projectedWorldUp) < -0.9999f)
+            {
+                // The two 180-degree recovery routes are equivalent. Choose
+                // one consistently instead of allowing numerical noise to
+                // alternate the direction from frame to frame.
+                signedCorrection = 180f;
+            }
+
+            float responseBlend = 1f - Mathf.Exp(
                 -cameraUpResponse * Mathf.Max(0f, deltaTime));
-            cameraUp = Vector3.Slerp(
-                transportedUp, desiredUp, upBlend).normalized;
+            float maximumCorrection = uprightRecoveryDegreesPerSecond *
+                                      Mathf.Max(0f, deltaTime) *
+                                      reanchorWeight;
+            float correction = Mathf.Clamp(
+                signedCorrection * responseBlend * reanchorWeight,
+                -maximumCorrection,
+                maximumCorrection);
+            cameraUp = Quaternion.AngleAxis(
+                correction, viewForward) * transportedUp;
             cameraUp = Vector3.ProjectOnPlane(
                 cameraUp, viewForward).normalized;
             return cameraUp.sqrMagnitude > 0.0001f

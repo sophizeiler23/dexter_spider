@@ -301,7 +301,8 @@ namespace Dexter.Spider
 
         public Quaternion GetSlopeAlignedRootRotation(
             Vector3 worldPosition,
-            Quaternion currentRotation)
+            Quaternion currentRotation,
+            Vector3 movementDirection)
         {
             EnsureTerrain();
             Vector3 planarForward = Vector3.ProjectOnPlane(
@@ -331,7 +332,24 @@ namespace Dexter.Spider
             float blend = 1f - Mathf.Exp(-slopeAlignmentResponse * Time.deltaTime);
             currentTerrainTilt = Quaternion.Slerp(
                 currentTerrainTilt, targetTilt, blend);
-            return currentTerrainTilt * currentRotation;
+
+            // Applying a generic tilt to the old yaw does not guarantee that
+            // transform.forward matches the projected travel vector. The
+            // mismatch becomes conspicuous on diagonal and near-vertical
+            // surfaces, where the spider can appear to strafe sideways.
+            Vector3 alignedUp = currentTerrainTilt * Vector3.up;
+            Vector3 alignedForward = Vector3.ProjectOnPlane(
+                movementDirection, alignedUp).normalized;
+            if (alignedForward.sqrMagnitude < 0.0001f)
+            {
+                alignedForward = Vector3.ProjectOnPlane(
+                    currentRotation * Vector3.forward,
+                    alignedUp).normalized;
+            }
+            if (alignedForward.sqrMagnitude < 0.0001f)
+                return currentTerrainTilt * currentRotation;
+
+            return Quaternion.LookRotation(alignedForward, alignedUp);
         }
 
         public bool TryGetRequiredBodyHeight(

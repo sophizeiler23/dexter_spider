@@ -2066,8 +2066,26 @@ namespace Dexter.Spider
             }
 
             if (terrainForces != null)
+            {
+                Vector3 facingDirection = surfaceForward;
+                Vector3 actualSurfaceTravel = Vector3.ProjectOnPlane(
+                    transform.position - movementStart,
+                    foundSurfaceFrame ? surfaceNormal : Vector3.up);
+                if (Mathf.Abs(forwardDelta) > 0.00001f &&
+                    actualSurfaceTravel.sqrMagnitude > 0.00000025f)
+                {
+                    // Use the direction the root actually advanced after
+                    // terrain projection, body clearance, and collision
+                    // resolution. This keeps the face forward even on a
+                    // diagonal or near-vertical surface.
+                    facingDirection = actualSurfaceTravel.normalized;
+                }
+
                 transform.rotation = terrainForces.GetSlopeAlignedRootRotation(
-                    GetTerrainSamplingPosition(), transform.rotation);
+                    GetTerrainSamplingPosition(),
+                    transform.rotation,
+                    facingDirection);
+            }
 
         }
 
