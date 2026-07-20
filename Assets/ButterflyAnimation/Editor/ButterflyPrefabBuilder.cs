@@ -1,6 +1,5 @@
 #if UNITY_EDITOR
 using System.IO;
-using Dexter.Butterfly;
 using UnityEditor;
 using UnityEngine;
 
@@ -43,6 +42,7 @@ namespace Dexter.Butterfly.Editor
         {
             EnsureFolder("Assets/ButterflyAnimation/Materials");
             EnsureFolder("Assets/ButterflyAnimation/Prefabs");
+            EnsureFolder("Assets/ButterflyAnimation/Animations");
 
             ConfigureTextureImportSettings();
 
@@ -61,6 +61,7 @@ namespace Dexter.Butterfly.Editor
 
             AssignMaterials(instance, bodyMaterial, wingMaterial);
             ConfigureRig(instance);
+            ButterflyFlapAnimationBuilder.AssignFlapAnimation(instance);
 
             if (File.Exists(PrefabPath))
                 AssetDatabase.DeleteAsset(PrefabPath);
@@ -252,9 +253,6 @@ namespace Dexter.Butterfly.Editor
 
             if (avatar != null)
                 animator.avatar = avatar;
-
-            if (root.GetComponent<ButterflyWingFlapPreview>() == null)
-                root.AddComponent<ButterflyWingFlapPreview>();
         }
 
         private static void EnsureFolder(string folderPath)
