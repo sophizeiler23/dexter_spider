@@ -20,6 +20,31 @@ namespace Dexter.Spider
         public bool IsCaptured => isCaptured;
         public float Radius => radius;
 
+        /// <summary>World-space size used to fit a capture web around this prey.</summary>
+        public float CaptureExtent
+        {
+            get
+            {
+                float extent = radius;
+                Renderer[] renderers = preyRenderers;
+                if (renderers == null || renderers.Length == 0)
+                    renderers = GetComponentsInChildren<Renderer>();
+
+                for (int i = 0; i < renderers.Length; i++)
+                {
+                    Renderer renderer = renderers[i];
+                    if (renderer == null)
+                        continue;
+
+                    Bounds bounds = renderer.bounds;
+                    float horizontal = new Vector2(bounds.extents.x, bounds.extents.z).magnitude;
+                    extent = Mathf.Max(extent, horizontal, bounds.extents.y);
+                }
+
+                return extent;
+            }
+        }
+
         private void Awake()
         {
             preyRenderers = GetComponentsInChildren<Renderer>();

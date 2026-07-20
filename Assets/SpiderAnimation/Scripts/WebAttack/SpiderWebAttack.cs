@@ -68,9 +68,13 @@ namespace Dexter.Spider
                 + Vector3.up * launchHeight
                 + direction * launchForwardOffset;
 
+            CirclePrey targetPrey = aimAtNearestPrey
+                ? FindNearestUncapturedPrey(anchor.position)
+                : null;
+
             GameObject shotObject = new("SpiderWebShot");
             SpiderWebShot shot = shotObject.AddComponent<SpiderWebShot>();
-            shot.Launch(origin, direction);
+            shot.Launch(origin, direction, targetPrey);
         }
 
         private void ResolveReferences()

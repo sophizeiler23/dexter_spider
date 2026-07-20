@@ -1441,6 +1441,7 @@ GameObject:
   m_Component:
   - component: {fileID: 9032945126645280672}
   - component: {fileID: 7254464915591135570}
+  - component: {fileID: 8254464915591135571}
   m_Layer: 0
   m_Name: Butterfly
   m_TagString: Untagged
@@ -1475,7 +1476,7 @@ Animator:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 5321027940003929244}
-  m_Enabled: 1
+  m_Enabled: 0
   m_Avatar: {fileID: 9000000, guid: 8b63ad9828ffa1441982471f97d6ceba, type: 3}
   m_Controller: {fileID: 9100000, guid: e2b3c4d5f6a7488990abcdef12345682, type: 2}
   m_CullingMode: 0
@@ -1489,6 +1490,20 @@ Animator:
   m_AllowConstantClipSamplingOptimization: 1
   m_KeepAnimatorStateOnDisable: 0
   m_WriteDefaultValuesOnDisable: 0
+--- !u!114 &8254464915591135571
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5321027940003929244}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 702288fff2be34d47b5df7ae53f07632, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Dexter.Butterfly.ButterflyWingFlapPreview
+  flapSpeed: 6
+  flapAngle: 28
 --- !u!1 &5341316646139719903
 GameObject:
   m_ObjectHideFlags: 0

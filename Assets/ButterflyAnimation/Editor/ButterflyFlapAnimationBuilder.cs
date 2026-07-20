@@ -81,10 +81,10 @@ namespace Dexter.Butterfly.Editor
             animator.runtimeAnimatorController = controller;
             animator.applyRootMotion = false;
             animator.cullingMode = AnimatorCullingMode.AlwaysAnimate;
+            animator.enabled = false;
 
-            ButterflyWingFlapPreview preview = root.GetComponent<ButterflyWingFlapPreview>();
-            if (preview != null)
-                Object.DestroyImmediate(preview);
+            if (root.GetComponent<ButterflyWingFlapPreview>() == null)
+                root.AddComponent<ButterflyWingFlapPreview>();
         }
 
         private static AnimationClip CreateOrUpdateFlapClip(GameObject root)

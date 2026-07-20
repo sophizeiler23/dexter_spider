@@ -45,7 +45,7 @@ namespace Dexter.Butterfly
             return null;
         }
 
-        private void Update()
+        private void LateUpdate()
         {
             float angle = Mathf.Sin(Time.time * flapSpeed) * flapAngle;
 

@@ -4,7 +4,7 @@ using UnityEngine;
 namespace Dexter.Spider
 {
     /// <summary>
-    /// A single web shot: dragline silk extends forward, then an orb-web net blooms at the tip.
+    /// A single web shot: dragline silk extends forward until it hits prey, then an orb-web net blooms on the target.
     /// Uses view-aligned line renderers for smooth, anti-aliased silk strands.
     /// </summary>
     [DisallowMultipleComponent]
@@ -19,13 +19,14 @@ namespace Dexter.Spider
         }
 
         [Header("Line Phase")]
-        [SerializeField, Min(0.1f)] private float lineLength = 1f;
+        [SerializeField, Min(0.5f)] private float maxShotRange = 5f;
         [SerializeField, Min(0.1f)] private float lineExtendSpeed = 4f;
         [SerializeField, Min(0.001f)] private float draglineWidth = 0.012f;
         [SerializeField, Range(0f, 0.2f)] private float draglineSag = 0.03f;
 
         [Header("Net Phase")]
-        [SerializeField, Min(0.1f)] private float netRadius = 1.6f;
+        [SerializeField, Min(0.1f)] private float defaultNetRadius = 0.6f;
+        [SerializeField, Range(1f, 2.5f)] private float netRadiusPadding = 1.2f;
         [SerializeField, Min(0.1f)] private float netExpandSpeed = 2.2f;
         [SerializeField, Range(6, 28)] private int spokeCount = 18;
         [SerializeField, Range(3, 12)] private int ringCount = 8;
@@ -56,9 +57,14 @@ namespace Dexter.Spider
         private Vector3 origin;
         private Vector3 direction = Vector3.forward;
         private float currentLineLength;
+        private float targetLineLength;
+        private float activeNetRadius;
         private float currentNetRadius;
         private float phaseTimer;
         private int randomSeed;
+        private CirclePrey targetPrey;
+        private bool netBuilt;
+        private float netWidthScale = 1f;
 
         private LineRenderer draglineRenderer;
         private Transform netRoot;
@@ -86,25 +92,24 @@ namespace Dexter.Spider
             public float Scale { get; }
         }
 
-        public void Launch(Vector3 launchOrigin, Vector3 launchDirection)
+        public void Launch(Vector3 launchOrigin, Vector3 launchDirection, CirclePrey preyTarget = null)
         {
             origin = launchOrigin;
             direction = launchDirection.sqrMagnitude > 0.0001f
                 ? launchDirection.normalized
                 : Vector3.forward;
 
+            targetPrey = preyTarget;
             randomSeed = Random.Range(0, int.MaxValue);
             lineMaterial = SpiderWebMaterialFactory.GetLineMaterial();
             transform.position = origin;
             transform.rotation = Quaternion.LookRotation(direction, Vector3.up);
 
-            BuildFullWebData();
+            targetLineLength = ResolveTargetLineLength();
+            activeNetRadius = ResolveNetRadius();
+
             CreateDragline();
-            CreateNetLines();
-            CreateDroplets();
             UpdateDraglineLine();
-            UpdateNetLines(0f);
-            SetNetVisible(false);
         }
 
         private void Update()
@@ -126,35 +131,76 @@ namespace Dexter.Spider
             }
         }
 
+        private float ResolveTargetLineLength()
+        {
+            if (targetPrey == null || targetPrey.IsCaptured)
+                return maxShotRange;
+
+            Vector3 toPrey = targetPrey.transform.position - origin;
+            float alongRay = Vector3.Dot(toPrey, direction);
+            return Mathf.Clamp(alongRay, 0.1f, maxShotRange);
+        }
+
+        private float ResolveNetRadius()
+        {
+            if (targetPrey != null && !targetPrey.IsCaptured)
+                return Mathf.Max(0.15f, targetPrey.CaptureExtent * netRadiusPadding);
+
+            return defaultNetRadius;
+        }
+
         private void UpdateExtending()
         {
             currentLineLength = Mathf.MoveTowards(
                 currentLineLength,
-                lineLength,
+                targetLineLength,
                 lineExtendSpeed * Time.deltaTime);
 
             UpdateDraglineLine();
 
-            if (Mathf.Approximately(currentLineLength, lineLength))
+            if (HasReachedPrey() || Mathf.Approximately(currentLineLength, targetLineLength))
+                BeginNetExpansion();
+        }
+
+        private bool HasReachedPrey()
+        {
+            if (targetPrey == null || targetPrey.IsCaptured)
+                return false;
+
+            Vector3 tip = origin + direction * currentLineLength;
+            return Vector3.Distance(tip, targetPrey.transform.position) <= targetPrey.CaptureExtent;
+        }
+
+        private void BeginNetExpansion()
+        {
+            if (targetPrey != null && !targetPrey.IsCaptured)
             {
-                phase = Phase.Expanding;
-                SetNetVisible(true);
-                PositionNetAtTip();
+                Vector3 preyPosition = targetPrey.transform.position;
+                currentLineLength = Mathf.Max(0.1f, Vector3.Dot(preyPosition - origin, direction));
+                activeNetRadius = ResolveNetRadius();
             }
+
+            UpdateDraglineLine();
+            BuildNetAtTip();
+            phase = Phase.Expanding;
         }
 
         private void UpdateExpanding()
         {
             currentNetRadius = Mathf.MoveTowards(
                 currentNetRadius,
-                netRadius,
+                activeNetRadius,
                 netExpandSpeed * Time.deltaTime);
 
-            UpdateWorkingStrands(currentNetRadius / netRadius, applyWind: true);
-            UpdateNetLines(currentNetRadius / netRadius);
+            float expansion01 = activeNetRadius > 0.0001f
+                ? currentNetRadius / activeNetRadius
+                : 1f;
+
+            UpdateWorkingStrands(expansion01, applyWind: true);
+            UpdateNetLines(expansion01);
             TryCapturePrey();
 
-            if (Mathf.Approximately(currentNetRadius, netRadius))
+            if (Mathf.Approximately(currentNetRadius, activeNetRadius))
             {
                 phase = Phase.Holding;
                 phaseTimer = 0f;
@@ -171,19 +217,33 @@ namespace Dexter.Spider
                 phase = Phase.Finished;
         }
 
+        private void BuildNetAtTip()
+        {
+            if (netBuilt)
+                return;
+
+            netWidthScale = Mathf.Clamp(activeNetRadius / defaultNetRadius, 0.35f, 1.5f);
+            BuildFullWebData();
+            CreateNetLines();
+            CreateDroplets();
+            PositionNetAtTip();
+            SetNetVisible(true);
+            netBuilt = true;
+        }
+
         private void BuildFullWebData()
         {
             OrbWebSettings settings = new(
-                netRadius,
+                activeNetRadius,
                 spokeCount,
                 ringCount,
                 ringSpacingPower,
-                ringJitter,
-                spiralBulge * netRadius,
+                ringJitter * netWidthScale,
+                spiralBulge * activeNetRadius,
                 curveSegments,
                 auxiliarySpiralTurns,
-                0.08f,
-                0.06f,
+                0.08f * netWidthScale,
+                0.06f * netWidthScale,
                 randomSeed);
 
             fullWebStrands = ProceduralOrbWeb.Generate(settings);
@@ -220,7 +280,7 @@ namespace Dexter.Spider
                 strandObject.transform.SetParent(netRoot, false);
 
                 LineRenderer line = strandObject.AddComponent<LineRenderer>();
-                float width = StrandWidth(strand.Type);
+                float width = StrandWidth(strand.Type) * netWidthScale;
                 Color color = StrandColor(strand.Type);
                 ConfigureLineRenderer(line, width, color);
                 line.useWorldSpace = false;
@@ -230,10 +290,14 @@ namespace Dexter.Spider
 
         private void CreateDroplets()
         {
+            float radiusScale = netWidthScale;
+            int scaledDropletCount = Mathf.RoundToInt(dropletCount * radiusScale * radiusScale);
+            scaledDropletCount = Mathf.Clamp(scaledDropletCount, 0, dropletCount);
+
             int created = 0;
             int safety = 0;
 
-            while (created < dropletCount && safety < dropletCount * 8)
+            while (created < scaledDropletCount && safety < scaledDropletCount * 8)
             {
                 safety++;
                 int strandIndex = Random.Range(0, fullWebStrands.Count);
@@ -250,7 +314,7 @@ namespace Dexter.Spider
                 GameObject droplet = GameObject.CreatePrimitive(PrimitiveType.Sphere);
                 droplet.name = $"Droplet_{created}";
                 droplet.transform.SetParent(netRoot, false);
-                droplet.transform.localScale = Vector3.one * dropletRadius * 2f * scale;
+                droplet.transform.localScale = Vector3.one * dropletRadius * 2f * scale * radiusScale;
 
                 Collider collider = droplet.GetComponent<Collider>();
                 if (collider != null)
@@ -340,7 +404,7 @@ namespace Dexter.Spider
                 line.positionCount = points.Length;
                 line.SetPositions(points);
 
-                float width = StrandWidth(fullWebStrands[i].Type) * Mathf.Lerp(0.2f, 1f, expansion01);
+                float width = StrandWidth(fullWebStrands[i].Type) * netWidthScale * Mathf.Lerp(0.2f, 1f, expansion01);
                 line.startWidth = width;
                 line.endWidth = width;
             }
@@ -416,7 +480,11 @@ namespace Dexter.Spider
             if (netRoot == null)
                 return;
 
-            netRoot.localPosition = direction * lineLength;
+            if (targetPrey != null && !targetPrey.IsCaptured)
+                netRoot.position = targetPrey.transform.position;
+            else
+                netRoot.localPosition = direction * currentLineLength;
+
             netRoot.localRotation = Quaternion.identity;
         }
 
@@ -428,10 +496,10 @@ namespace Dexter.Spider
 
         private void TryCapturePrey()
         {
-            if (capturedPrey != null)
+            if (capturedPrey != null || netRoot == null)
                 return;
 
-            Vector3 netCenter = origin + direction * lineLength;
+            Vector3 netCenter = netRoot.position;
             Collider[] overlaps = Physics.OverlapSphere(netCenter, currentNetRadius);
 
             for (int i = 0; i < overlaps.Length; i++)
@@ -441,7 +509,7 @@ namespace Dexter.Spider
                     continue;
 
                 float distance = Vector3.Distance(netCenter, prey.transform.position);
-                if (distance <= currentNetRadius + prey.Radius)
+                if (distance <= currentNetRadius + prey.CaptureExtent * 0.15f)
                 {
                     capturedPrey = prey;
                     prey.Capture(netRoot);
