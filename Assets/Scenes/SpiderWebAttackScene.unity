@@ -525,6 +525,9 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 6e022b4d6e99395318ff5a73686461be, type: 3}
       insertIndex: -1
       addedObject: {fileID: 1600001010}
+    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 6e022b4d6e99395318ff5a73686461be, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1600001012}
   m_SourcePrefab: {fileID: 100100000, guid: 6e022b4d6e99395318ff5a73686461be, type: 3}
 --- !u!1 &832575517
 GameObject:
@@ -985,6 +988,22 @@ MonoBehaviour:
   cadenceBalanceSensitivity: 1.75
   maximumBalanceShift: 0.1
   balanceTipResponse: 3
+--- !u!114 &1600001012
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1600001001}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9009eada02f84712a92a650b37edb884, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Dexter.Visualize.DexterForceOverlay
+  receiver: {fileID: 1600001003}
+  displayMode: 1
+  pixelsPerNewton: 55
+  maximumArrowPixels: 175
 --- !u!1 &1700001001
 GameObject:
   m_ObjectHideFlags: 0

@@ -488,7 +488,7 @@ namespace Dexter.Spider
         {
             bool waitingForDevice = waitingForIpadMovementCalibration &&
                 (receiver == null || !receiver.HasRecentFrame ||
-                 !IsIpadFrame(receiver.LatestFrame) ||
+                 !IsRelayPositionFrame(receiver.LatestFrame) ||
                  !HasActiveIpadCalibrationFinger());
             bool showComplete = ipadMovementCalibrationComplete &&
                 Time.realtimeSinceStartup <=
@@ -497,41 +497,43 @@ namespace Dexter.Spider
                 !showComplete)
                 return;
 
-            float panelWidth = Mathf.Min(620f, Screen.width - 40f);
-            float panelHeight = 150f;
-            var panel = new Rect(
-                (Screen.width - panelWidth) * 0.5f,
-                Mathf.Max(20f, Screen.height * 0.12f),
-                panelWidth,
-                panelHeight);
-            GUI.Box(panel, GUIContent.none);
+            Rect panel = DexterSpiderHudLayout.CalibrationPanel;
+            DrawRect(panel, new Color(0.08f, 0.09f, 0.12f, 0.92f));
+            DrawOutline(panel, new Color(0.25f, 0.29f, 0.37f, 1f), 1f);
 
             var titleStyle = new GUIStyle(GUI.skin.label)
             {
                 alignment = TextAnchor.MiddleCenter,
-                fontSize = Mathf.Clamp(Screen.height / 36, 20, 32),
+                fontSize = 14,
                 fontStyle = FontStyle.Bold,
                 normal = { textColor = Color.white }
             };
             var messageStyle = new GUIStyle(GUI.skin.label)
             {
                 alignment = TextAnchor.MiddleCenter,
-                fontSize = Mathf.Clamp(Screen.height / 50, 16, 24),
+                fontSize = 11,
                 wordWrap = true,
-                normal = { textColor = Color.white }
+                normal = { textColor = new Color(0.88f, 0.9f, 0.94f, 1f) }
+            };
+            var countdownStyle = new GUIStyle(GUI.skin.label)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                fontSize = 28,
+                fontStyle = FontStyle.Bold,
+                normal = { textColor = new Color32(255, 214, 102, 255) }
             };
 
             if (waitingForDevice)
             {
                 GUI.Label(
-                    new Rect(panel.x + 20f, panel.y + 12f,
-                        panel.width - 40f, 42f),
-                    "WAITING FOR iPAD",
+                    new Rect(panel.x + 12f, panel.y + 8f,
+                        panel.width - 24f, 20f),
+                    "WAITING FOR RELAY INPUT",
                     titleStyle);
                 GUI.Label(
-                    new Rect(panel.x + 30f, panel.y + 58f,
-                        panel.width - 60f, 72f),
-                    "Start the iPad relay and place a finger on either control. The 10-second displacement calibration will begin with the first active touch.",
+                    new Rect(panel.x + 16f, panel.y + 30f,
+                        panel.width - 32f, 52f),
+                    "Start the relay and place a finger on index or middle. Calibration begins on first active touch and counts down from 10.",
                     messageStyle);
             }
             else if (isIpadMovementCalibrating)
@@ -542,30 +544,52 @@ namespace Dexter.Spider
                     ipadMovementCalibrationStart);
                 float remaining = Mathf.Max(
                     0f, calibrationDurationSeconds - elapsed);
+                int secondsRemaining = Mathf.CeilToInt(remaining);
                 GUI.Label(
-                    new Rect(panel.x + 20f, panel.y + 12f,
-                        panel.width - 40f, 42f),
-                    $"CALIBRATING iPAD  {remaining:0.0}s",
+                    new Rect(panel.x + 12f, panel.y + 6f,
+                        panel.width - 24f, 18f),
+                    "CALIBRATING",
                     titleStyle);
                 GUI.Label(
-                    new Rect(panel.x + 30f, panel.y + 58f,
-                        panel.width - 60f, 72f),
-                    "Place both fingers on the iPad, then alternate them through the displacement range you want to use for normal walking.",
+                    new Rect(panel.x + panel.width * 0.5f - 28f,
+                        panel.y + 24f, 56f, 34f),
+                    secondsRemaining.ToString(),
+                    countdownStyle);
+                GUI.Label(
+                    new Rect(panel.x + 16f, panel.y + 58f,
+                        panel.width - 32f, 28f),
+                    "Alternate index and middle through your normal walking displacement range.",
                     messageStyle);
             }
             else
             {
                 GUI.Label(
-                    new Rect(panel.x + 20f, panel.y + 20f,
-                        panel.width - 40f, 44f),
-                    "iPAD CALIBRATION COMPLETE",
+                    new Rect(panel.x + 12f, panel.y + 10f,
+                        panel.width - 24f, 20f),
+                    "CALIBRATION COMPLETE",
                     titleStyle);
                 GUI.Label(
-                    new Rect(panel.x + 30f, panel.y + 68f,
-                        panel.width - 60f, 52f),
+                    new Rect(panel.x + 16f, panel.y + 34f,
+                        panel.width - 32f, 44f),
                     $"Normal walking displacement: {calibratedIpadReferenceDisplacement:0.00}",
                     messageStyle);
             }
+        }
+
+        private static void DrawRect(Rect rect, Color color)
+        {
+            Color previous = GUI.color;
+            GUI.color = color;
+            GUI.DrawTexture(rect, Texture2D.whiteTexture);
+            GUI.color = previous;
+        }
+
+        private static void DrawOutline(Rect rect, Color color, float width)
+        {
+            DrawRect(new Rect(rect.x, rect.y, rect.width, width), color);
+            DrawRect(new Rect(rect.x, rect.yMax - width, rect.width, width), color);
+            DrawRect(new Rect(rect.x, rect.y, width, rect.height), color);
+            DrawRect(new Rect(rect.xMax - width, rect.y, width, rect.height), color);
         }
 
         private void BeginDiagnosticTrace()
@@ -1082,9 +1106,19 @@ namespace Dexter.Spider
                  !isIpadMovementCalibrating) || receiver == null)
                 return;
 
+            if (isIpadMovementCalibrating &&
+                Time.realtimeSinceStartup - ipadMovementCalibrationStart >=
+                calibrationDurationSeconds)
+            {
+                CompleteIpadMovementCalibration();
+                return;
+            }
+
             DexterForceFrame frame = receiver.LatestFrame;
-            if (!IsIpadFrame(frame) || !receiver.HasRecentFrame ||
-                !HasActiveIpadCalibrationFinger())
+            if (!IsRelayPositionFrame(frame) || !receiver.HasRecentFrame)
+                return;
+
+            if (!HasActiveIpadCalibrationFinger())
                 return;
 
             if (waitingForIpadMovementCalibration)
@@ -1122,13 +1156,6 @@ namespace Dexter.Spider
                     !float.IsInfinity(strongestY))
                     ipadMovementCalibrationSamples.Add(strongestY);
             }
-
-            if (Time.realtimeSinceStartup -
-                ipadMovementCalibrationStart <
-                calibrationDurationSeconds)
-                return;
-
-            CompleteIpadMovementCalibration();
         }
 
         private void CompleteIpadMovementCalibration()
@@ -1199,15 +1226,20 @@ namespace Dexter.Spider
             ResetWorldFootTargets(rightLegs);
         }
 
-        private static bool IsIpadFrame(DexterForceFrame frame)
+        private static bool IsRelayPositionFrame(DexterForceFrame frame)
         {
             if (frame?.fingers == null)
                 return false;
 
             string transport = frame.transport ?? string.Empty;
             return transport.IndexOf(
-                "ipad", StringComparison.OrdinalIgnoreCase) >= 0;
+                       "ipad", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   transport.IndexOf(
+                       "touchpad", StringComparison.OrdinalIgnoreCase) >= 0;
         }
+
+        private static bool IsIpadFrame(DexterForceFrame frame) =>
+            IsRelayPositionFrame(frame);
 
         private bool HasActiveIpadCalibrationFinger()
         {

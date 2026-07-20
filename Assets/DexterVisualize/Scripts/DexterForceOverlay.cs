@@ -6,6 +6,12 @@ namespace Dexter.Visualize
     [RequireComponent(typeof(DexterRelayUdpReceiver))]
     public sealed class DexterForceOverlay : MonoBehaviour
     {
+        public enum DisplayMode
+        {
+            FullScreen,
+            EmbeddedPanel
+        }
+
         private const int FingerCount = 5;
         private const int TareSampleCount = 20;
 
@@ -38,6 +44,7 @@ namespace Dexter.Visualize
         };
 
         [SerializeField] private DexterRelayUdpReceiver receiver;
+        [SerializeField] private DisplayMode displayMode = DisplayMode.FullScreen;
         [SerializeField, Min(1f)] private float pixelsPerNewton = 55f;
         [SerializeField, Min(20f)] private float maximumArrowPixels = 175f;
 
@@ -50,8 +57,11 @@ namespace Dexter.Visualize
 
         private Texture2D circleTexture;
         private GUIStyle titleStyle;
+        private GUIStyle compactTitleStyle;
         private GUIStyle statusStyle;
+        private GUIStyle compactStatusStyle;
         private GUIStyle fingerNameStyle;
+        private GUIStyle compactFingerNameStyle;
         private GUIStyle valueStyle;
 
         private void Awake()
@@ -76,36 +86,18 @@ namespace Dexter.Visualize
         {
             EnsureStyles();
 
+            if (displayMode == DisplayMode.EmbeddedPanel)
+            {
+                DrawEmbeddedPanel(DexterSpiderHudLayout.ForcePanel);
+                return;
+            }
+
             DrawRect(new Rect(0f, 0f, Screen.width, Screen.height), new Color(0.055f, 0.065f, 0.085f, 1f));
 
             float width = Mathf.Min(820f, Screen.width - 32f);
             float height = Mathf.Min(650f, Screen.height - 32f);
             var panel = new Rect((Screen.width - width) * 0.5f, (Screen.height - height) * 0.5f, width, height);
-            DrawRect(panel, new Color(0.09f, 0.105f, 0.135f, 0.98f));
-            DrawOutline(panel, new Color(0.25f, 0.29f, 0.37f, 1f), 1f);
-
-            GUI.Label(new Rect(panel.x + 24f, panel.y + 18f, panel.width - 180f, 34f), "DEXTER FORCE VISUALIZER", titleStyle);
-            if (GUI.Button(new Rect(panel.xMax - 118f, panel.y + 17f, 94f, 30f), tareSamplesRemaining > 0 ? "Taring…" : "Tare"))
-                BeginTare();
-
-            DrawStatus(panel);
-
-            var plot = new Rect(panel.x + 28f, panel.y + 92f, panel.width - 56f, panel.height - 136f);
-            DrawRect(plot, new Color(0.045f, 0.052f, 0.068f, 1f));
-            DrawOutline(plot, new Color(0.16f, 0.19f, 0.24f, 1f), 1f);
-
-            Vector2 palm = new Vector2(plot.x + plot.width * 0.49f, plot.y + plot.height * 0.76f);
-            for (int i = 0; i < FingerCount; i++)
-            {
-                Vector2 origin = PlotPoint(plot, HandLayout[i]);
-                DrawLine(palm, origin, new Color(0.24f, 0.27f, 0.34f, 0.75f), 3f);
-            }
-
-            for (int i = 0; i < FingerCount; i++)
-                DrawFinger(plot, i);
-
-            GUI.Label(new Rect(panel.x + 24f, panel.yMax - 35f, panel.width - 48f, 22f),
-                "Arrow direction = Fx / Fy    •    Arrow length = force magnitude    •    Units: N", statusStyle);
+            DrawPanel(panel, showFooter: true, compact: false);
         }
 
         public void BeginTare()
@@ -118,6 +110,82 @@ namespace Dexter.Visualize
 
             tareSamplesRemaining = TareSampleCount;
             lastTareSequence = long.MinValue;
+        }
+
+        private void DrawEmbeddedPanel(Rect panel)
+        {
+            DrawRect(panel, new Color(0.09f, 0.105f, 0.135f, 0.94f));
+            DrawOutline(panel, new Color(0.25f, 0.29f, 0.37f, 1f), 1f);
+            GUI.Label(
+                new Rect(panel.x + 12f, panel.y + 6f, panel.width - 84f, 20f),
+                "DEXTER FORCES",
+                compactTitleStyle);
+
+            if (GUI.Button(new Rect(panel.xMax - 68f, panel.y + 4f, 56f, 22f),
+                    tareSamplesRemaining > 0 ? "Taring…" : "Tare"))
+                BeginTare();
+
+            var statusPanel = new Rect(panel.x, panel.y + 24f, panel.width, 18f);
+            DrawStatus(statusPanel, compact: true);
+
+            var plot = new Rect(panel.x + 10f, panel.y + 44f, panel.width - 20f, panel.height - 52f);
+            DrawForcePlot(plot, compact: true);
+        }
+
+        private void DrawPanel(Rect panel, bool showFooter, bool compact)
+        {
+            DrawRect(panel, new Color(0.09f, 0.105f, 0.135f, 0.98f));
+            DrawOutline(panel, new Color(0.25f, 0.29f, 0.37f, 1f), 1f);
+
+            GUIStyle headerStyle = compact ? compactTitleStyle : titleStyle;
+            GUI.Label(
+                new Rect(panel.x + 24f, panel.y + 18f, panel.width - 180f, 34f),
+                "DEXTER FORCE VISUALIZER",
+                headerStyle);
+
+            if (GUI.Button(
+                    new Rect(panel.xMax - 118f, panel.y + 17f, 94f, 30f),
+                    tareSamplesRemaining > 0 ? "Taring…" : "Tare"))
+                BeginTare();
+
+            var statusPanel = compact
+                ? new Rect(panel.x + 12f, panel.y + 42f, panel.width - 24f, 18f)
+                : new Rect(panel.x, panel.y, panel.width, panel.height);
+            DrawStatus(statusPanel, compact);
+
+            float plotTop = compact ? panel.y + 64f : panel.y + 92f;
+            float plotBottomPad = compact ? 12f : 136f;
+            var plot = new Rect(
+                panel.x + (compact ? 10f : 28f),
+                plotTop,
+                panel.width - (compact ? 20f : 56f),
+                panel.height - plotBottomPad);
+            DrawForcePlot(plot, compact);
+
+            if (showFooter)
+            {
+                GUI.Label(
+                    new Rect(panel.x + 24f, panel.yMax - 35f, panel.width - 48f, 22f),
+                    "Arrow direction = Fx / Fy    •    Arrow length = force magnitude    •    Units: N",
+                    statusStyle);
+            }
+        }
+
+        private void DrawForcePlot(Rect plot, bool compact)
+        {
+            DrawRect(plot, new Color(0.045f, 0.052f, 0.068f, 1f));
+            DrawOutline(plot, new Color(0.16f, 0.19f, 0.24f, 1f), 1f);
+
+            Vector2 palm = new Vector2(plot.x + plot.width * 0.49f, plot.y + plot.height * 0.76f);
+            float connectorWidth = compact ? 2f : 3f;
+            for (int i = 0; i < FingerCount; i++)
+            {
+                Vector2 origin = PlotPoint(plot, HandLayout[i]);
+                DrawLine(palm, origin, new Color(0.24f, 0.27f, 0.34f, 0.75f), connectorWidth);
+            }
+
+            for (int i = 0; i < FingerCount; i++)
+                DrawFinger(plot, i, compact);
         }
 
         private void CaptureTareSample()
@@ -147,7 +215,7 @@ namespace Dexter.Visualize
             hasBaseline = true;
         }
 
-        private void DrawStatus(Rect panel)
+        private void DrawStatus(Rect panel, bool compact)
         {
             string text;
             Color color;
@@ -170,40 +238,57 @@ namespace Dexter.Visualize
             else
             {
                 string state = receiver.HasRecentFrame ? "LIVE" : "STALE";
-                text = $"{state}  •  {receiver.ServerLabel}  •  {receiver.LatestFrame.transport}  •  seq {receiver.LatestFrame.sequence}";
-                color = receiver.HasRecentFrame ? new Color32(82, 210, 126, 255) : new Color32(241, 181, 74, 255);
+                text = compact
+                    ? $"{state}  •  {receiver.LatestFrame.transport}  •  seq {receiver.LatestFrame.sequence}"
+                    : $"{state}  •  {receiver.ServerLabel}  •  {receiver.LatestFrame.transport}  •  seq {receiver.LatestFrame.sequence}";
+                color = receiver.HasRecentFrame
+                    ? new Color32(82, 210, 126, 255)
+                    : new Color32(241, 181, 74, 255);
             }
 
-            statusStyle.normal.textColor = color;
-            GUI.Label(new Rect(panel.x + 25f, panel.y + 54f, panel.width - 50f, 24f), text, statusStyle);
+            GUIStyle style = compact ? compactStatusStyle : statusStyle;
+            style.normal.textColor = color;
+            float x = compact ? panel.x + 12f : panel.x + 25f;
+            float y = compact ? panel.y : panel.y + 54f;
+            float width = compact ? panel.width - 24f : panel.width - 50f;
+            GUI.Label(new Rect(x, y, width, compact ? 18f : 24f), text, style);
         }
 
-        private void DrawFinger(Rect plot, int index)
+        private void DrawFinger(Rect plot, int index, bool compact)
         {
             Vector2 origin = PlotPoint(plot, HandLayout[index]);
             bool hasForce = TryGetForce(index, out Vector2 force);
             if (hasForce && hasBaseline)
                 force -= baseline[index];
 
+            float scale = compact ? 0.55f : 1f;
             float magnitude = hasForce ? force.magnitude : 0f;
-            Vector2 arrow = new Vector2(force.x, -force.y) * pixelsPerNewton;
-            if (arrow.magnitude > maximumArrowPixels)
-                arrow = arrow.normalized * maximumArrowPixels;
+            Vector2 arrow = new Vector2(force.x, -force.y) * pixelsPerNewton * scale;
+            float maxArrow = maximumArrowPixels * scale;
+            if (arrow.magnitude > maxArrow)
+                arrow = arrow.normalized * maxArrow;
 
             Color color = FingerColors[index];
             if (receiver == null || !receiver.HasRecentFrame || !hasForce)
                 color.a = 0.45f;
 
-            DrawCircle(origin, 16f, color);
-            DrawCircle(origin, 7f, Color.white);
+            float nodeSize = 16f * scale;
+            float coreSize = 7f * scale;
+            DrawCircle(origin, nodeSize, color);
+            DrawCircle(origin, coreSize, Color.white);
 
             if (arrow.sqrMagnitude >= 1f)
-                DrawArrow(origin, origin + arrow, color, 4f);
+                DrawArrow(origin, origin + arrow, color, 4f * scale);
+
+            if (compact)
+                return;
 
             fingerNameStyle.normal.textColor = color;
             GUI.Label(new Rect(origin.x - 65f, origin.y + 15f, 130f, 22f), FingerNames[index], fingerNameStyle);
-            GUI.Label(new Rect(origin.x - 75f, origin.y + 36f, 150f, 22f),
-                hasForce ? $"{magnitude:F2} N  ({force.x:F2}, {force.y:F2})" : "waiting", valueStyle);
+            GUI.Label(
+                new Rect(origin.x - 75f, origin.y + 36f, 150f, 22f),
+                hasForce ? $"{magnitude:F2} N  ({force.x:F2}, {force.y:F2})" : "waiting",
+                valueStyle);
         }
 
         private bool TryGetForce(int index, out Vector2 force)
@@ -235,13 +320,23 @@ namespace Dexter.Visualize
             };
             titleStyle.normal.textColor = new Color32(225, 231, 242, 255);
 
+            compactTitleStyle = new GUIStyle(titleStyle)
+            {
+                fontSize = 12,
+                alignment = TextAnchor.MiddleLeft
+            };
+
             statusStyle = new GUIStyle(GUI.skin.label) { fontSize = 12, alignment = TextAnchor.MiddleLeft };
+            compactStatusStyle = new GUIStyle(statusStyle) { fontSize = 10 };
+
             fingerNameStyle = new GUIStyle(GUI.skin.label)
             {
                 fontSize = 14,
                 fontStyle = FontStyle.Bold,
                 alignment = TextAnchor.UpperCenter
             };
+            compactFingerNameStyle = new GUIStyle(fingerNameStyle) { fontSize = 10 };
+
             valueStyle = new GUIStyle(GUI.skin.label) { fontSize = 11, alignment = TextAnchor.UpperCenter };
             valueStyle.normal.textColor = new Color32(188, 197, 214, 255);
         }
