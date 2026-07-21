@@ -28,14 +28,12 @@ namespace Dexter.Spider
         [Header("Dexter Active Movement Calibration")]
         [Tooltip("When physical Dexter raw samples are detected, pause movement and learn a comfortable walking force from the first calibration period. iPad/editor input is unaffected.")]
         [SerializeField] private bool calibrateDexterMovementOnStart = true;
-        [Tooltip("Percentile of the recorded walking-strength samples used as the normal Dexter walking force. A middle percentile ignores brief peaks while remaining responsive.")]
-        [SerializeField, Range(0.25f, 0.8f)] private float dexterCalibrationReferencePercentile = 0.45f;
         [Tooltip("Safety floor for a learned Dexter reference so an accidental no-input calibration cannot amplify sensor noise.")]
         [SerializeField, Min(0.01f)] private float minimumDexterCalibrationForce = 0.1f;
         [Tooltip("Physical Dexter force needed for maximum walking and turning speed, as a multiple of the learned normal force. Lower values are more sensitive.")]
         [SerializeField, Range(1.05f, 6f)] private float dexterMaximumSpeedForceMultiplier = 1.2f;
-        [Tooltip("Sensitivity applied only to physical Dexter index/middle input after calibration. Higher values make walking and turning respond to lighter movement without changing iPad controls.")]
-        [SerializeField, Range(1f, 3f)] private float dexterFingerInputSensitivity = 1.35f;
+        [Tooltip("Maximum sensitivity boost applied to very light physical Dexter index/middle input. The boost tapers to 1 at maximum-speed force so small movements stay responsive without compressing the high-force control range. iPad controls are unaffected.")]
+        [SerializeField, Range(1f, 3f)] private float dexterFingerInputSensitivity = 1.75f;
 
         [Header("Diagnostics")]
         [Tooltip("Writes one CSV row per unique Dexter frame with raw input and solved foot positions.")]
@@ -189,10 +187,12 @@ namespace Dexter.Spider
         [SerializeField, Min(0f)] private float jumpCooldown = 0.20f;
 
         [Header("Two-Finger Turning")]
+        [Tooltip("Physical Dexter-only sensitivity for turn activation and speed range. Higher values require less X force without changing iPad turning.")]
+        [SerializeField, Range(1f, 3f)] private float dexterTurningSensitivity = 1.5f;
         [Tooltip("Minimum post-scaled X input on both fingers before an iPad turn registers.")]
         [SerializeField, Min(0f)] private float turnActivationForce = 1f;
         [Tooltip("X must be at least this fraction of Y on both fingers. This prevents a mostly vertical walking gesture from being mistaken for a turn.")]
-        [SerializeField, Range(0f, 1f)] private float turnAxisDominanceRatio = 0.65f;
+        [SerializeField, Range(0f, 1f)] private float turnAxisDominanceRatio = 0.45f;
         [Tooltip("Post-scaled iPad X input at or below minimum turn speed.")]
         [SerializeField, Min(0.001f)] private float turnMinimumSpeedDisplacement = 5f;
         [Tooltip("Post-scaled iPad X input that reaches maximum turn speed.")]
@@ -770,9 +770,9 @@ namespace Dexter.Spider
             row.Append("thumb_fx,thumb_fy,index_fx,index_fy,middle_fx,middle_fy,ring_fx,ring_fy,pinky_fx,pinky_fy,");
             row.Append("index_baseline_x,index_baseline_y,middle_baseline_x,middle_baseline_y,thumb_jump_baseline_x,thumb_jump_baseline_y,");
             row.Append("index_activation_threshold,middle_activation_threshold,index_release_threshold,middle_release_threshold,");
-            row.Append("dexter_finger_input_sensitivity,index_scaled_smoothed_fx,index_scaled_smoothed_fy,middle_scaled_smoothed_fx,middle_scaled_smoothed_fy,");
+            row.Append("calibrated_walking_reference_force,dexter_finger_input_sensitivity,index_scaled_smoothed_fx,index_scaled_smoothed_fy,middle_scaled_smoothed_fx,middle_scaled_smoothed_fy,");
             row.Append("pressed_finger,last_active_finger,maximum_alternation_interval_s,input_drive_release_delay_s,travel_direction,forward_speed,target_forward_distance,current_forward_distance,");
-            row.Append("turn_input,turn_speed_deg_s,yaw_degrees,");
+            row.Append("turn_input,turn_speed_deg_s,yaw_degrees,dexter_turning_sensitivity,turn_activation_force,turn_minimum_speed_force,turn_maximum_speed_force,turn_axis_dominance_ratio,");
             row.Append("thumb_applied_fx,thumb_applied_fy,thumb_applied_magnitude,");
             row.Append("jump_input_armed,is_sampling_jump_force,jump_press_qualified,sampled_jump_peak_force,jump_sampling_elapsed_s,jump_activation_hold_s,jump_gate_state,jump_gate_reason,jump_activation_force,jump_base_activation_force,walking_input_force,walking_jump_activation_margin_per_n,walking_jump_activation_addition,jump_release_force,jump_release_activation_fraction,calibrated_jump_reference_force,calibrated_thumb_incidental_force,thumb_incidental_safety_multiplier,thumb_incidental_activation_floor,calibrated_jump_activation_fraction,strong_jump_delta_force,strong_jump_trigger_force,");
             row.Append("jump_id,jump_event,jump_event_name,is_jumping,jump_force,jump_progress,jump_distance,strong_jump,");
@@ -852,6 +852,7 @@ namespace Dexter.Spider
             AppendNumber(row, rightAdaptiveActivationThreshold);
             AppendNumber(row, leftAdaptiveReleaseThreshold);
             AppendNumber(row, rightAdaptiveReleaseThreshold);
+            AppendNumber(row, calibratedDexterReferenceForce);
             AppendNumber(row, dexterFingerInputSensitivity);
             AppendVector2(row, smoothedLeftForce);
             AppendVector2(row, smoothedRightForce);
@@ -866,6 +867,11 @@ namespace Dexter.Spider
             AppendNumber(row, turnInput);
             AppendNumber(row, currentTurnSpeed);
             AppendNumber(row, currentYawDegrees);
+            AppendNumber(row, dexterTurningSensitivity);
+            AppendNumber(row, GetActiveTurnActivationForce());
+            AppendNumber(row, GetActiveTurnMinimumSpeedDisplacement());
+            AppendNumber(row, GetActiveTurnMaximumSpeedDisplacement());
+            AppendNumber(row, turnAxisDominanceRatio);
             AppendVector2(row, currentThumbAppliedForce);
             AppendNumber(row, currentThumbAppliedForce.magnitude);
             AppendBoolean(row, jumpInputArmed);
@@ -1394,21 +1400,19 @@ namespace Dexter.Spider
             if (frame.sequence != lastDexterMovementCalibrationSequence)
             {
                 lastDexterMovementCalibrationSequence = frame.sequence;
-                float strongestY = 0f;
-                bool hasForce = false;
+                float combinedY = 0f;
+                int fingerSampleCount = 0;
                 if (TryReadForce(
                         leftLegFinger, out Vector2 leftCalibrationForce))
                 {
-                    strongestY = Mathf.Abs(leftCalibrationForce.y);
-                    hasForce = true;
+                    combinedY += Mathf.Abs(leftCalibrationForce.y);
+                    fingerSampleCount++;
                 }
                 if (TryReadForce(
                         rightLegFinger, out Vector2 rightCalibrationForce))
                 {
-                    strongestY = Mathf.Max(
-                        strongestY,
-                        Mathf.Abs(rightCalibrationForce.y));
-                    hasForce = true;
+                    combinedY += Mathf.Abs(rightCalibrationForce.y);
+                    fingerSampleCount++;
                 }
                 if (TryReadForce(
                         jumpFinger, out Vector2 thumbCalibrationForce))
@@ -1426,9 +1430,13 @@ namespace Dexter.Spider
                             thumbCalibrationForce);
                 }
 
-                if (hasForce && !float.IsNaN(strongestY) &&
-                    !float.IsInfinity(strongestY))
-                    dexterMovementCalibrationSamples.Add(strongestY);
+                if (fingerSampleCount > 0)
+                {
+                    float meanFingerY = combinedY / fingerSampleCount;
+                    if (!float.IsNaN(meanFingerY) &&
+                        !float.IsInfinity(meanFingerY))
+                        dexterMovementCalibrationSamples.Add(meanFingerY);
+                }
             }
 
             if (Time.realtimeSinceStartup -
@@ -1444,15 +1452,14 @@ namespace Dexter.Spider
             CompleteThumbJumpCalibration();
             if (dexterMovementCalibrationSamples.Count > 0)
             {
-                dexterMovementCalibrationSamples.Sort();
-                int sampleIndex = Mathf.RoundToInt(
-                    (dexterMovementCalibrationSamples.Count - 1) *
-                    dexterCalibrationReferencePercentile);
+                float forceSum = 0f;
+                for (int i = 0;
+                     i < dexterMovementCalibrationSamples.Count;
+                     i++)
+                    forceSum += dexterMovementCalibrationSamples[i];
                 calibratedDexterReferenceForce = Mathf.Max(
                     minimumDexterCalibrationForce,
-                    dexterMovementCalibrationSamples[
-                        Mathf.Clamp(sampleIndex, 0,
-                            dexterMovementCalibrationSamples.Count - 1)]);
+                    forceSum / dexterMovementCalibrationSamples.Count);
             }
             else
             {
@@ -1676,13 +1683,20 @@ namespace Dexter.Spider
 
         private float GetActiveTurnActivationForce()
         {
-            return turnActivationForce * GetActiveForceRangeScale();
+            float threshold = turnActivationForce *
+                              GetActiveForceRangeScale();
+            return IsUsingCalibratedDexterInput()
+                ? threshold / dexterTurningSensitivity
+                : threshold;
         }
 
         private float GetActiveTurnMinimumSpeedDisplacement()
         {
-            return turnMinimumSpeedDisplacement *
-                   GetActiveForceRangeScale();
+            float minimumForce = turnMinimumSpeedDisplacement *
+                                 GetActiveForceRangeScale();
+            return IsUsingCalibratedDexterInput()
+                ? minimumForce / dexterTurningSensitivity
+                : minimumForce;
         }
 
         private float GetActiveTurnMaximumSpeedDisplacement()
@@ -1691,6 +1705,17 @@ namespace Dexter.Spider
                 ? GetActiveTurnMinimumSpeedDisplacement() *
                   dexterMaximumSpeedForceMultiplier
                 : turnForceForMaximumSpeed;
+        }
+
+        private Vector2 ApplyDexterFingerSensitivity(Vector2 force)
+        {
+            float fullScaleForce = Mathf.Max(
+                0.001f, GetActiveMaximumSpeedDisplacement());
+            float forceStrength = Mathf.Clamp01(
+                force.magnitude / fullScaleForce);
+            float taperedBoost = Mathf.Lerp(
+                dexterFingerInputSensitivity, 1f, forceStrength);
+            return force * taperedBoost;
         }
 
         private static float CalculateStandardDeviation(float mean, float squareSum, int samples)
@@ -1720,8 +1745,8 @@ namespace Dexter.Spider
                     rightForce = measuredRightForce - (hasBaseline ? rightBaseline : Vector2.zero);
                 if (physicalDexterFrame)
                 {
-                    leftForce *= dexterFingerInputSensitivity;
-                    rightForce *= dexterFingerInputSensitivity;
+                    leftForce = ApplyDexterFingerSensitivity(leftForce);
+                    rightForce = ApplyDexterFingerSensitivity(rightForce);
                     hasJumpForce = TryReadForce(
                         jumpFinger, out Vector2 measuredJumpForce);
                     if (hasJumpForce)
@@ -1795,7 +1820,12 @@ namespace Dexter.Spider
                         sampledJumpPeakForce = 0f;
                         sampledJumpPeakDirection = Vector2.zero;
                         jumpPressQualified = false;
-                        jumpInputArmed = forceMagnitude <= releaseForce;
+                        // This press never became a jump, so dropping back
+                        // below activation must leave the detector ready for
+                        // the next deliberate press. Requiring the much lower
+                        // post-jump release threshold here caused permanent
+                        // waiting after ordinary short thumb movements.
+                        jumpInputArmed = true;
                         jumpGateState = 2;
                         return;
                     }
@@ -1827,6 +1857,7 @@ namespace Dexter.Spider
                 jumpInputArmed = wasReleased;
                 if (capturedPeak < activationForce)
                 {
+                    jumpInputArmed = true;
                     jumpGateState = 2;
                     return;
                 }
@@ -1903,7 +1934,7 @@ namespace Dexter.Spider
         {
             return Mathf.Max(
                 jumpReleaseForce,
-                GetBaseJumpActivationForce() *
+                GetActiveJumpActivationForce() *
                 jumpReleaseActivationFraction);
         }
 
@@ -3919,14 +3950,14 @@ namespace Dexter.Spider
             jumpFinger = DexterFinger.Thumb;
             ApplyResponsiveMovementDefaults();
             calibrationDurationSeconds = Mathf.Max(0.25f, calibrationDurationSeconds);
-            dexterCalibrationReferencePercentile = Mathf.Clamp(
-                dexterCalibrationReferencePercentile, 0.25f, 0.8f);
             minimumDexterCalibrationForce = Mathf.Max(
                 0.01f, minimumDexterCalibrationForce);
             dexterMaximumSpeedForceMultiplier = Mathf.Clamp(
                 dexterMaximumSpeedForceMultiplier, 1.05f, 6f);
             dexterFingerInputSensitivity = Mathf.Clamp(
                 dexterFingerInputSensitivity, 1f, 3f);
+            dexterTurningSensitivity = Mathf.Clamp(
+                dexterTurningSensitivity, 1f, 3f);
             displacementPerNewton.x = Mathf.Max(0f, displacementPerNewton.x);
             displacementPerNewton.y = Mathf.Max(0f, displacementPerNewton.y);
             forceDeadZone = Mathf.Max(0f, forceDeadZone);
