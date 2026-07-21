@@ -1,0 +1,241 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1220" viewBox="0 0 1800 1220" role="img" aria-labelledby="title desc">
+  <title id="title">Spider movement and constraints</title>
+  <desc id="desc">A spacious diagram focused on root movement, tetrapod leg motion, foot placement, body posture, terrain contact, climbing, collision checks, and numeric movement limits.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#07111f"/>
+      <stop offset="1" stop-color="#121d33"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="5" stdDeviation="7" flood-color="#00040b" flood-opacity="0.46"/>
+    </filter>
+    <marker id="cyanArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#22d3ee"/>
+    </marker>
+    <marker id="violetArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#a78bfa"/>
+    </marker>
+    <marker id="greenArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#34d399"/>
+    </marker>
+    <marker id="pinkArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#fb7185"/>
+    </marker>
+    <style>
+      .title { font: 700 36px Inter, Segoe UI, sans-serif; fill: #f8fafc; }
+      .subtitle { font: 400 17px Inter, Segoe UI, sans-serif; fill: #a9b8cf; }
+      .section { font: 700 20px Inter, Segoe UI, sans-serif; fill: #eef5ff; letter-spacing: 1px; }
+      .card-title { font: 700 19px Inter, Segoe UI, sans-serif; fill: #f8fafc; }
+      .body { font: 400 15px Inter, Segoe UI, sans-serif; fill: #cfdaea; }
+      .small { font: 400 13px Inter, Segoe UI, sans-serif; fill: #a9b8cf; }
+      .label { font: 700 13px Inter, Segoe UI, sans-serif; }
+      .number { font: 700 20px Inter, Segoe UI, sans-serif; fill: #e6f9ff; }
+      .panel { fill: #0c1729; stroke: #2e4260; stroke-width: 1.5; }
+      .move-card { fill: #102632; stroke: #06b6d4; stroke-width: 1.8; }
+      .gait-card { fill: #211a37; stroke: #8b5cf6; stroke-width: 1.8; }
+      .surface-card { fill: #10291f; stroke: #10b981; stroke-width: 1.8; }
+      .limit-card { fill: #2b1822; stroke: #f43f5e; stroke-width: 1.8; }
+      .cyan-line { fill: none; stroke: #22d3ee; stroke-width: 3; marker-end: url(#cyanArrow); }
+      .violet-line { fill: none; stroke: #a78bfa; stroke-width: 3; marker-end: url(#violetArrow); }
+      .green-line { fill: none; stroke: #34d399; stroke-width: 3; marker-end: url(#greenArrow); }
+      .pink-line { fill: none; stroke: #fb7185; stroke-width: 3; marker-end: url(#pinkArrow); }
+      .dashed { stroke-dasharray: 9 7; }
+    </style>
+  </defs>
+
+  <rect width="1800" height="1220" fill="url(#bg)"/>
+  <circle cx="1700" cy="90" r="250" fill="#0d9488" opacity="0.045"/>
+  <circle cx="80" cy="1160" r="260" fill="#7c3aed" opacity="0.04"/>
+
+  <text x="48" y="52" class="title">Spider Movement &amp; Constraints</text>
+  <text x="49" y="82" class="subtitle">How the root, body, and eight feet are allowed to move</text>
+  <rect x="1304" y="32" width="448" height="51" rx="13" fill="#2b1822" stroke="#fb7185" stroke-width="1.4"/>
+  <text x="1327" y="55" class="label" fill="#fda4af">KINEMATIC CONTROLLER</text>
+  <text x="1327" y="73" class="small" fill="#fecdd3">Transforms and IK targets move directly; no Rigidbody</text>
+
+  <!-- Top movement chain -->
+  <text x="48" y="127" class="section">ROOT MOVEMENT</text>
+  <rect x="46" y="145" width="1706" height="222" rx="20" class="panel" filter="url(#shadow)"/>
+
+  <rect x="76" y="180" width="352" height="151" rx="15" class="move-card"/>
+  <text x="100" y="210" class="card-title">1 · Walking is authorized</text>
+  <text x="100" y="240" class="body">Index and Middle must alternate.</text>
+  <text x="100" y="266" class="body">The change must occur within 0.6 s.</text>
+  <text x="100" y="292" class="body">Translation is forward-only.</text>
+  <text x="100" y="317" class="small">Single-finger input moves one side in place.</text>
+
+  <path d="M428 256 L472 256" class="cyan-line"/>
+
+  <rect x="473" y="180" width="352" height="151" rx="15" class="move-card"/>
+  <text x="497" y="210" class="card-title">2 · Speed demand</text>
+  <text x="497" y="240" class="body">Stride: 0.325 → 0.52 units</text>
+  <text x="497" y="266" class="body">Speed: about 0.69 → 2.6 units/s</text>
+  <text x="497" y="292" class="body">Planted-foot traction scales the result.</text>
+  <text x="497" y="317" class="small">Acceleration +5 · braking 12 units/s²</text>
+
+  <path d="M825 256 L869 256" class="cyan-line"/>
+
+  <rect x="870" y="180" width="400" height="151" rx="15" class="surface-card"/>
+  <text x="894" y="210" class="card-title">3 · Follow the terrain surface</text>
+  <text x="894" y="240" class="body">Forward is projected onto the surface.</text>
+  <text x="894" y="266" class="body">Slope speed falls to 45% by 38°.</text>
+  <text x="894" y="292" class="body">The root keeps its captured clearance.</text>
+  <text x="894" y="317" class="small">Corners blend instead of snapping.</text>
+
+  <path d="M1270 256 L1314 256" class="green-line"/>
+
+  <rect x="1315" y="180" width="407" height="151" rx="15" class="move-card"/>
+  <text x="1339" y="210" class="card-title">4 · Orient the spider</text>
+  <text x="1339" y="240" class="body">Yaw follows a two-finger turn gesture.</text>
+  <text x="1339" y="266" class="body">Up follows the sampled terrain normal.</text>
+  <text x="1339" y="292" class="body">Ground tilt ≤ 12° · climb tilt ≤ 89.5°</text>
+  <text x="1339" y="317" class="small">Turning speed: 10 → 45°/s</text>
+
+  <!-- Main three-column region -->
+  <text x="48" y="411" class="section">LEG MOTION</text>
+  <text x="1240" y="411" class="section">MOVEMENT CONSTRAINTS</text>
+
+  <!-- Left gait cards -->
+  <rect x="46" y="429" width="494" height="583" rx="20" class="panel" filter="url(#shadow)"/>
+
+  <rect x="72" y="459" width="442" height="148" rx="15" class="gait-card"/>
+  <text x="96" y="490" class="card-title">Alternating tetrapod groups</text>
+  <text x="96" y="521" class="body">Group A: L1, L3, R2, R4</text>
+  <text x="96" y="548" class="body">Group B: R1, R3, L2, L4</text>
+  <text x="96" y="578" class="small">One group swings while the other supports.</text>
+
+  <rect x="72" y="630" width="442" height="166" rx="15" class="gait-card"/>
+  <text x="96" y="661" class="card-title">Swing phase</text>
+  <text x="96" y="692" class="body">The foot travels toward its landing point.</text>
+  <text x="96" y="719" class="body">Horizontal path: smooth cosine motion.</text>
+  <text x="96" y="746" class="body">Vertical path: sine arc along surface normal.</text>
+  <text x="96" y="776" class="small">Peak lift: approximately 0.223 → 0.466 units</text>
+
+  <rect x="72" y="819" width="442" height="166" rx="15" class="gait-card"/>
+  <text x="96" y="850" class="card-title">Stance phase</text>
+  <text x="96" y="881" class="body">The planted target stays fixed in world space.</text>
+  <text x="96" y="908" class="body">The body moves past the stationary foot.</text>
+  <text x="96" y="935" class="body">This creates the visible power stroke.</text>
+  <text x="96" y="965" class="small">Lag above 0.58 triggers a recovery step.</text>
+
+  <!-- Center spider illustration -->
+  <rect x="572" y="429" width="636" height="583" rx="20" class="panel" filter="url(#shadow)"/>
+  <text x="598" y="463" class="card-title">Top view of controlled targets</text>
+  <text x="598" y="488" class="small">Colored feet show the two alternating support groups.</text>
+
+  <!-- Forward and turning indicators -->
+  <path d="M890 575 L890 510" class="cyan-line"/>
+  <text x="910" y="535" class="label" fill="#67e8f9">FORWARD</text>
+  <path d="M823 580 A92 92 0 0 1 957 580" class="violet-line"/>
+  <text x="853" y="566" class="label" fill="#c4b5fd">YAW</text>
+
+  <!-- Reach boundary and body collision boundary -->
+  <ellipse cx="890" cy="748" rx="252" ry="203" fill="none" stroke="#64748b" stroke-width="2" stroke-dasharray="10 8"/>
+  <ellipse cx="890" cy="748" rx="118" ry="95" fill="#fb7185" opacity="0.07" stroke="#fb7185" stroke-width="2.5" stroke-dasharray="7 6"/>
+  <text x="662" y="960" class="small">Dashed outer shape: allowed foot workspace</text>
+  <text x="662" y="984" class="small" fill="#fda4af">Pink boundary: body collision volume</text>
+
+  <!-- Spider body -->
+  <ellipse cx="890" cy="748" rx="89" ry="132" fill="#152f43" stroke="#7dd3fc" stroke-width="4"/>
+  <ellipse cx="890" cy="705" rx="63" ry="64" fill="#214661" stroke="#bae6fd" stroke-width="2"/>
+  <circle cx="866" cy="681" r="7" fill="#f8fafc"/>
+  <circle cx="914" cy="681" r="7" fill="#f8fafc"/>
+  <circle cx="866" cy="681" r="3" fill="#082f49"/>
+  <circle cx="914" cy="681" r="3" fill="#082f49"/>
+  <text x="864" y="758" class="label" fill="#dbeafe">ROOT</text>
+
+  <!-- Eight legs: group A cyan, group B violet -->
+  <path d="M830 678 L760 624 L667 603" stroke="#22d3ee" stroke-width="8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="662" cy="602" r="14" fill="#22d3ee" stroke="#cffafe" stroke-width="3"/>
+  <text x="620" y="591" class="label" fill="#67e8f9">L1</text>
+
+  <path d="M813 728 L731 707 L646 725" stroke="#a78bfa" stroke-width="8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="641" cy="726" r="14" fill="#a78bfa" stroke="#ede9fe" stroke-width="3"/>
+  <text x="600" y="716" class="label" fill="#c4b5fd">L2</text>
+
+  <path d="M813 778 L731 802 L646 788" stroke="#22d3ee" stroke-width="8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="641" cy="787" r="14" fill="#22d3ee" stroke="#cffafe" stroke-width="3"/>
+  <text x="600" y="810" class="label" fill="#67e8f9">L3</text>
+
+  <path d="M830 827 L760 879 L667 900" stroke="#a78bfa" stroke-width="8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="662" cy="901" r="14" fill="#a78bfa" stroke="#ede9fe" stroke-width="3"/>
+  <text x="620" y="929" class="label" fill="#c4b5fd">L4</text>
+
+  <path d="M950 678 L1020 624 L1113 603" stroke="#a78bfa" stroke-width="8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="1118" cy="602" r="14" fill="#a78bfa" stroke="#ede9fe" stroke-width="3"/>
+  <text x="1139" y="591" class="label" fill="#c4b5fd">R1</text>
+
+  <path d="M967 728 L1049 707 L1134 725" stroke="#22d3ee" stroke-width="8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="1139" cy="726" r="14" fill="#22d3ee" stroke="#cffafe" stroke-width="3"/>
+  <text x="1161" y="716" class="label" fill="#67e8f9">R2</text>
+
+  <path d="M967 778 L1049 802 L1134 788" stroke="#a78bfa" stroke-width="8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="1139" cy="787" r="14" fill="#a78bfa" stroke="#ede9fe" stroke-width="3"/>
+  <text x="1161" y="810" class="label" fill="#c4b5fd">R3</text>
+
+  <path d="M950 827 L1020 879 L1113 900" stroke="#22d3ee" stroke-width="8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="1118" cy="901" r="14" fill="#22d3ee" stroke="#cffafe" stroke-width="3"/>
+  <text x="1139" y="929" class="label" fill="#67e8f9">R4</text>
+
+  <!-- Right constraint cards -->
+  <rect x="1240" y="429" width="512" height="583" rx="20" class="panel" filter="url(#shadow)"/>
+
+  <rect x="1266" y="459" width="460" height="147" rx="15" class="limit-card"/>
+  <text x="1290" y="490" class="card-title">Foot workspace</text>
+  <text x="1290" y="521" class="body">Reach stays between 82% and 106% of rest.</text>
+  <text x="1290" y="548" class="body">Feet cannot cross neighboring row lanes.</text>
+  <text x="1290" y="578" class="small">Targets are corrected above the local surface.</text>
+
+  <rect x="1266" y="630" width="460" height="166" rx="15" class="limit-card"/>
+  <text x="1290" y="661" class="card-title">Obstacle collision</text>
+  <text x="1290" y="692" class="body">Root cast radius: 0.48 · skin: 0.075</text>
+  <text x="1290" y="719" class="body">Foot cast radius: 0.1125</text>
+  <text x="1290" y="746" class="body">A hard hit truncates the requested motion.</text>
+  <text x="1290" y="776" class="small">Grass and flowers are treated as soft obstacles.</text>
+
+  <rect x="1266" y="819" width="460" height="166" rx="15" class="surface-card"/>
+  <text x="1290" y="850" class="card-title">Surface contact and climbing</text>
+  <text x="1290" y="881" class="body">Feet are projected along the surface normal.</text>
+  <text x="1290" y="908" class="body">Climbable terrain: 45° → 89.5°</text>
+  <text x="1290" y="935" class="body">Wall adhesion holds even at neutral input.</text>
+  <text x="1290" y="965" class="small">Corner clearance is enforced against both faces.</text>
+
+  <!-- Bottom hard limits -->
+  <text x="48" y="1055" class="section">HARD LIMITS AND POSTURE</text>
+  <rect x="46" y="1073" width="1706" height="111" rx="18" class="panel"/>
+
+  <rect x="71" y="1095" width="255" height="68" rx="12" class="move-card"/>
+  <text x="91" y="1122" class="number">0.5 units/s</text>
+  <text x="91" y="1148" class="small">maximum environmental slide</text>
+
+  <rect x="349" y="1095" width="255" height="68" rx="12" class="surface-card"/>
+  <text x="369" y="1122" class="number">9.81 units/s²</text>
+  <text x="369" y="1148" class="small">custom gravity acceleration</text>
+
+  <rect x="627" y="1095" width="255" height="68" rx="12" class="surface-card"/>
+  <text x="647" y="1122" class="number">11.77 units/s²</text>
+  <text x="647" y="1148" class="small">minimum wall adhesion</text>
+
+  <rect x="905" y="1095" width="255" height="68" rx="12" class="limit-card"/>
+  <text x="925" y="1122" class="number">−0.64 units</text>
+  <text x="925" y="1148" class="small">ground body offset</text>
+
+  <rect x="1183" y="1095" width="255" height="68" rx="12" class="limit-card"/>
+  <text x="1203" y="1122" class="number">4.5° / 0.10</text>
+  <text x="1203" y="1148" class="small">maximum body tip / shift</text>
+
+  <rect x="1461" y="1095" width="265" height="68" rx="12" class="gait-card"/>
+  <text x="1481" y="1122" class="number">14 iterations</text>
+  <text x="1481" y="1148" class="small">CCD solve per leg</text>
+
+  <!-- Legend -->
+  <line x1="49" y1="1203" x2="86" y2="1203" stroke="#22d3ee" stroke-width="5"/>
+  <text x="98" y="1208" class="small">root motion</text>
+  <line x1="240" y1="1203" x2="277" y2="1203" stroke="#a78bfa" stroke-width="5"/>
+  <text x="289" y="1208" class="small">tetrapod gait</text>
+  <line x1="445" y1="1203" x2="482" y2="1203" stroke="#34d399" stroke-width="5"/>
+  <text x="494" y="1208" class="small">terrain response</text>
+  <line x1="694" y1="1203" x2="731" y2="1203" stroke="#fb7185" stroke-width="5"/>
+  <text x="743" y="1208" class="small">hard constraint</text>
+  <text x="1439" y="1208" class="small">Unity units assumed ≈ metres</text>
+</svg>

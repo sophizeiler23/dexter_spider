@@ -1,0 +1,258 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1160" viewBox="0 0 1800 1160" role="img" aria-labelledby="title desc">
+  <title id="title">Spider leg and center-of-mass schematic</title>
+  <desc id="desc">An abstract side-view engineering schematic with no spider body. It shows the root, center of mass, four hip rows, paired left and right leg chains, joints, feet, stance reactions, traction, swing target, workspace limits, and terrain contact.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#07111f"/>
+      <stop offset="1" stop-color="#111d32"/>
+    </linearGradient>
+    <linearGradient id="ground" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#163c30"/>
+      <stop offset="1" stop-color="#0a241d"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#00040b" flood-opacity="0.5"/>
+    </filter>
+    <marker id="orangeArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#fbbf24"/>
+    </marker>
+    <marker id="greenArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#34d399"/>
+    </marker>
+    <marker id="cyanArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#22d3ee"/>
+    </marker>
+    <marker id="blueArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#60a5fa"/>
+    </marker>
+    <marker id="violetArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#a78bfa"/>
+    </marker>
+    <style>
+      .title { font: 700 36px Inter, Segoe UI, sans-serif; fill: #f8fafc; }
+      .subtitle { font: 400 17px Inter, Segoe UI, sans-serif; fill: #aebed3; }
+      .section { font: 700 20px Inter, Segoe UI, sans-serif; fill: #eef5ff; letter-spacing: 1px; }
+      .card-title { font: 700 18px Inter, Segoe UI, sans-serif; fill: #f8fafc; }
+      .body { font: 400 14px Inter, Segoe UI, sans-serif; fill: #ced9e8; }
+      .small { font: 400 12.5px Inter, Segoe UI, sans-serif; fill: #a8b7cc; }
+      .label { font: 700 13px Inter, Segoe UI, sans-serif; paint-order: stroke; stroke: #091426; stroke-width: 5px; stroke-linejoin: round; }
+      .formula { font: 500 14px ui-monospace, SFMono-Regular, Consolas, monospace; fill: #d8f7eb; }
+      .panel { fill: #0c1729; stroke: #2e4260; stroke-width: 1.5; }
+      .card { fill: #111e33; stroke: #344966; stroke-width: 1.3; }
+      .cyan-chain { fill: none; stroke: #22d3ee; stroke-width: 11; stroke-linecap: round; stroke-linejoin: round; }
+      .violet-chain { fill: none; stroke: #a78bfa; stroke-width: 8; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 13 9; }
+      .gravity { fill: none; stroke: #fbbf24; stroke-width: 5; marker-end: url(#orangeArrow); }
+      .normal { fill: none; stroke: #34d399; stroke-width: 5; marker-end: url(#greenArrow); }
+      .traction { fill: none; stroke: #22d3ee; stroke-width: 5; marker-end: url(#cyanArrow); }
+      .drive { fill: none; stroke: #60a5fa; stroke-width: 5; stroke-dasharray: 11 8; marker-end: url(#blueArrow); }
+      .swing { fill: none; stroke: #a78bfa; stroke-width: 5; stroke-dasharray: 11 8; marker-end: url(#violetArrow); }
+    </style>
+  </defs>
+
+  <rect width="1800" height="1160" fill="url(#bg)"/>
+  <circle cx="1700" cy="70" r="230" fill="#0d9488" opacity="0.045"/>
+
+  <text x="48" y="52" class="title">Leg, Root &amp; Center-of-Mass Schematic</text>
+  <text x="49" y="82" class="subtitle">Abstract side view — reference points and kinematic links only, with no spider body or face</text>
+  <rect x="1345" y="31" width="407" height="53" rx="13" fill="#17223a" stroke="#60a5fa" stroke-width="1.4"/>
+  <text x="1369" y="54" class="card-title">Eight legs shown as four pairs</text>
+  <text x="1369" y="74" class="small">Solid and dashed chains overlap in this side projection</text>
+
+  <text x="48" y="127" class="section">SIDE PROJECTION</text>
+  <rect x="46" y="145" width="1248" height="810" rx="20" class="panel" filter="url(#shadow)"/>
+
+  <!-- Ground -->
+  <path d="M75 854 L1249 701 L1249 921 L75 921 Z" fill="url(#ground)" stroke="#34d399" stroke-width="3"/>
+  <path d="M75 854 L1249 701" stroke="#6ee7b7" stroke-width="5" stroke-linecap="round"/>
+  <text x="94" y="838" class="small">sampled terrain surface</text>
+
+  <!-- Root and body reference frame, not a body drawing -->
+  <line x1="330" y1="381" x2="1012" y2="381" stroke="#94a3b8" stroke-width="3" stroke-dasharray="12 9"/>
+  <text x="343" y="357" class="small">hip-anchor reference line</text>
+  <line x1="670" y1="310" x2="670" y2="466" stroke="#64748b" stroke-width="2" stroke-dasharray="7 7"/>
+
+  <!-- Root marker -->
+  <circle cx="670" cy="310" r="15" fill="#0f1d32" stroke="#60a5fa" stroke-width="4"/>
+  <line x1="647" y1="310" x2="693" y2="310" stroke="#60a5fa" stroke-width="3"/>
+  <line x1="670" y1="287" x2="670" y2="333" stroke="#60a5fa" stroke-width="3"/>
+  <text x="693" y="340" class="label" fill="#93c5fd">R · root</text>
+
+  <!-- COM marker -->
+  <circle cx="670" cy="381" r="18" fill="#fbbf24" stroke="#fff7cc" stroke-width="4"/>
+  <circle cx="670" cy="381" r="5" fill="#6b4500"/>
+  <text x="700" y="387" class="label" fill="#fde68a">COM</text>
+  <path d="M670 400 L670 596" class="gravity"/>
+  <text x="690" y="510" class="label" fill="#fde68a">G</text>
+
+  <!-- Root drive -->
+  <path d="M700 310 L920 286" class="drive"/>
+  <text x="773" y="302" class="label" fill="#93c5fd">D · forward root command</text>
+
+  <!-- Root-to-posture offset dimension -->
+  <line x1="1092" y1="310" x2="1092" y2="381" stroke="#fb7185" stroke-width="2"/>
+  <line x1="1082" y1="310" x2="1102" y2="310" stroke="#fb7185" stroke-width="2"/>
+  <line x1="1082" y1="381" x2="1102" y2="381" stroke="#fb7185" stroke-width="2"/>
+  <line x1="935" y1="310" x2="1082" y2="310" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="6 6" opacity="0.65"/>
+  <text x="1110" y="337" class="small" fill="#fda4af">posture offset</text>
+  <text x="1110" y="357" class="small" fill="#fda4af">ground target: −0.64</text>
+
+  <!-- Hip anchors -->
+  <g fill="#f8fafc" stroke="#334155" stroke-width="4">
+    <circle cx="395" cy="381" r="15"/>
+    <circle cx="555" cy="381" r="15"/>
+    <circle cx="785" cy="381" r="15"/>
+    <circle cx="945" cy="381" r="15"/>
+  </g>
+  <text x="373" y="344" class="label" fill="#e2e8f0">H4</text>
+  <text x="533" y="344" class="label" fill="#e2e8f0">H3</text>
+  <text x="763" y="344" class="label" fill="#e2e8f0">H2</text>
+  <text x="923" y="344" class="label" fill="#e2e8f0">H1</text>
+  <text x="350" y="415" class="small">rear</text>
+  <text x="943" y="415" class="small">front</text>
+
+  <!-- Workspace boundaries from each hip -->
+  <path d="M244 743 A245 245 0 0 1 535 501" fill="none" stroke="#64748b" stroke-width="2" stroke-dasharray="9 7"/>
+  <path d="M400 753 A245 245 0 0 1 683 488" fill="none" stroke="#64748b" stroke-width="2" stroke-dasharray="9 7"/>
+  <path d="M666 727 A245 245 0 0 1 911 488" fill="none" stroke="#64748b" stroke-width="2" stroke-dasharray="9 7"/>
+  <path d="M838 713 A245 245 0 0 1 1087 501" fill="none" stroke="#64748b" stroke-width="2" stroke-dasharray="9 7"/>
+  <text x="164" y="653" class="small">workspace arcs</text>
+  <text x="164" y="674" class="small">82%–106% of rest reach</text>
+
+  <!-- Row 4 pair: L4 violet, R4 cyan -->
+  <path d="M395 381 L307 584 L222 835" class="cyan-chain"/>
+  <path d="M405 372 L318 574 L233 825" class="violet-chain"/>
+  <circle cx="307" cy="584" r="12" fill="#0c1729" stroke="#22d3ee" stroke-width="4"/>
+  <circle cx="222" cy="835" r="17" fill="#22d3ee" stroke="#cffafe" stroke-width="3"/>
+  <text x="274" y="609" class="label" fill="#cbd5e1">J4</text>
+  <text x="172" y="820" class="label" fill="#67e8f9">F4</text>
+
+  <!-- Row 3 pair: L3 cyan, R3 violet -->
+  <path d="M555 381 L481 608 L414 810" class="cyan-chain"/>
+  <path d="M565 372 L492 598 L425 800" class="violet-chain"/>
+  <circle cx="481" cy="608" r="12" fill="#0c1729" stroke="#22d3ee" stroke-width="4"/>
+  <circle cx="414" cy="810" r="17" fill="#22d3ee" stroke="#cffafe" stroke-width="3"/>
+  <text x="448" y="633" class="label" fill="#cbd5e1">J3</text>
+  <text x="364" y="795" class="label" fill="#67e8f9">F3</text>
+
+  <!-- Row 2 pair: L2 violet, R2 cyan -->
+  <path d="M785 381 L784 577 L736 768" class="cyan-chain"/>
+  <path d="M795 372 L795 567 L747 758" class="violet-chain"/>
+  <circle cx="784" cy="577" r="12" fill="#0c1729" stroke="#22d3ee" stroke-width="4"/>
+  <circle cx="736" cy="768" r="17" fill="#22d3ee" stroke="#cffafe" stroke-width="3"/>
+  <text x="804" y="598" class="label" fill="#cbd5e1">J2</text>
+  <text x="686" y="753" class="label" fill="#67e8f9">F2</text>
+
+  <!-- Row 1 pair and a raised swing target -->
+  <path d="M945 381 L1041 540 L1112 645" class="cyan-chain"/>
+  <path d="M955 372 L1052 530 L1123 635" class="violet-chain"/>
+  <circle cx="1041" cy="540" r="12" fill="#0c1729" stroke="#22d3ee" stroke-width="4"/>
+  <circle cx="1112" cy="645" r="17" fill="#a78bfa" stroke="#ede9fe" stroke-width="3"/>
+  <text x="1056" y="567" class="label" fill="#cbd5e1">J1</text>
+  <text x="1133" y="638" class="label" fill="#c4b5fd">F1 swing</text>
+  <path d="M1112 645 C1148 585, 1210 608, 1190 694" class="swing"/>
+  <circle cx="1190" cy="694" r="12" fill="none" stroke="#a78bfa" stroke-width="3" stroke-dasharray="5 4"/>
+  <text x="1162" y="581" class="label" fill="#c4b5fd">P</text>
+
+  <!-- Foot support normals -->
+  <path d="M222 818 L244 700" class="normal"/>
+  <text x="249" y="720" class="label" fill="#6ee7b7">N4</text>
+  <path d="M414 793 L436 675" class="normal"/>
+  <text x="441" y="695" class="label" fill="#6ee7b7">N3</text>
+  <path d="M736 751 L758 633" class="normal"/>
+  <text x="763" y="653" class="label" fill="#6ee7b7">N2</text>
+
+  <!-- Foot traction -->
+  <path d="M240 833 L357 818" class="traction"/>
+  <text x="286" y="800" class="label" fill="#67e8f9">T4</text>
+  <path d="M432 808 L549 793" class="traction"/>
+  <text x="478" y="775" class="label" fill="#67e8f9">T3</text>
+
+  <!-- Structural labels -->
+  <rect x="82" y="179" width="330" height="104" rx="13" fill="#17223a" stroke="#60a5fa" stroke-width="1.5"/>
+  <text x="104" y="207" class="card-title">Reference points only</text>
+  <text x="104" y="234" class="body">R is the transform root.</text>
+  <text x="104" y="257" class="body">COM marks the body-weight reference.</text>
+  <text x="104" y="277" class="small">The dashed line only locates the hip anchors.</text>
+
+  <rect x="431" y="179" width="371" height="104" rx="13" fill="#211a37" stroke="#8b5cf6" stroke-width="1.5"/>
+  <text x="453" y="207" class="card-title">Two chains at every row</text>
+  <text x="453" y="234" class="body">Solid cyan and dashed violet indicate</text>
+  <text x="453" y="257" class="body">the left/right legs that overlap in side view.</text>
+  <text x="453" y="277" class="small">Together, H1–H4 represent all eight legs.</text>
+
+  <rect x="821" y="179" width="441" height="104" rx="13" fill="#10291f" stroke="#10b981" stroke-width="1.5"/>
+  <text x="843" y="207" class="card-title">Contact state</text>
+  <text x="843" y="234" class="body">F2–F4 are planted and support the root.</text>
+  <text x="843" y="257" class="body">F1 is raised, so it has no normal arrow.</text>
+  <text x="843" y="277" class="small">Its dashed P arrow shows the next IK target.</text>
+
+  <!-- Right legend -->
+  <text x="1326" y="127" class="section">SYMBOLS &amp; ARROWS</text>
+  <rect x="1324" y="145" width="428" height="810" rx="20" class="panel" filter="url(#shadow)"/>
+
+  <rect x="1348" y="172" width="380" height="91" rx="13" class="card"/>
+  <circle cx="1381" cy="205" r="12" fill="#fbbf24" stroke="#fff7cc" stroke-width="3"/>
+  <text x="1411" y="201" class="card-title">COM · center of mass</text>
+  <text x="1411" y="225" class="body">Origin for body-weight and balance posture.</text>
+  <text x="1411" y="248" class="small">Current configured COM offset is zero.</text>
+
+  <rect x="1348" y="279" width="380" height="91" rx="13" class="card"/>
+  <circle cx="1381" cy="312" r="11" fill="#f8fafc" stroke="#334155" stroke-width="3"/>
+  <text x="1411" y="308" class="card-title">H · hip anchor</text>
+  <text x="1411" y="332" class="body">The first controlled joint of each leg row.</text>
+  <text x="1411" y="355" class="small">Four rows × two sides = eight chains.</text>
+
+  <rect x="1348" y="386" width="380" height="91" rx="13" class="card"/>
+  <circle cx="1381" cy="419" r="10" fill="#0c1729" stroke="#22d3ee" stroke-width="3"/>
+  <text x="1411" y="415" class="card-title">J · intermediate joints</text>
+  <text x="1411" y="439" class="body">CCD rotates these links toward the target.</text>
+  <text x="1411" y="462" class="small">Joint rotations stay near their rest pose.</text>
+
+  <rect x="1348" y="493" width="380" height="91" rx="13" class="card"/>
+  <circle cx="1381" cy="526" r="12" fill="#22d3ee" stroke="#cffafe" stroke-width="3"/>
+  <text x="1411" y="522" class="card-title">F · foot / end effector</text>
+  <text x="1411" y="546" class="body">Plant point during stance; target during swing.</text>
+  <text x="1411" y="569" class="small">Planted points remain fixed in world space.</text>
+
+  <rect x="1348" y="600" width="380" height="91" rx="13" class="card"/>
+  <line x1="1368" y1="635" x2="1414" y2="635" class="gravity"/>
+  <text x="1434" y="628" class="card-title">G · custom gravity</text>
+  <text x="1434" y="652" class="body">9.81 units/s² downward at COM.</text>
+  <text x="1434" y="675" class="small">Changes environmental slide velocity.</text>
+
+  <rect x="1348" y="707" width="380" height="91" rx="13" class="card"/>
+  <line x1="1368" y1="742" x2="1414" y2="742" class="normal"/>
+  <text x="1434" y="735" class="card-title">N · contact support</text>
+  <text x="1434" y="759" class="body">Projects planted feet above the terrain.</text>
+  <text x="1434" y="782" class="small">A positional constraint, not an impulse.</text>
+
+  <rect x="1348" y="814" width="380" height="116" rx="13" class="card"/>
+  <line x1="1368" y1="847" x2="1414" y2="847" class="traction"/>
+  <text x="1434" y="840" class="card-title">T · stance traction</text>
+  <text x="1434" y="864" class="body">Scales forward root speed while planted.</text>
+  <line x1="1368" y1="898" x2="1414" y2="898" class="swing"/>
+  <text x="1434" y="903" class="body">P · next swing-foot IK target</text>
+
+  <!-- Bottom gait and limits -->
+  <text x="48" y="999" class="section">PAIRING AND KINEMATIC LIMITS</text>
+  <rect x="46" y="1017" width="1706" height="111" rx="18" class="panel"/>
+
+  <rect x="72" y="1039" width="356" height="67" rx="12" fill="#102632" stroke="#06b6d4" stroke-width="1.4"/>
+  <text x="94" y="1066" class="card-title">Tetrapod Group A · cyan</text>
+  <text x="94" y="1091" class="small">L1, L3, R2, R4</text>
+
+  <rect x="451" y="1039" width="356" height="67" rx="12" fill="#211a37" stroke="#8b5cf6" stroke-width="1.4"/>
+  <text x="473" y="1066" class="card-title">Tetrapod Group B · violet</text>
+  <text x="473" y="1091" class="small">R1, R3, L2, L4</text>
+
+  <rect x="830" y="1039" width="425" height="67" rx="12" fill="#2b1822" stroke="#f43f5e" stroke-width="1.4"/>
+  <text x="852" y="1066" class="card-title">Foot reach</text>
+  <text x="852" y="1091" class="small">82%–106% of authored rest length · row lanes cannot overlap</text>
+
+  <rect x="1278" y="1039" width="448" height="67" rx="12" fill="#17223a" stroke="#60a5fa" stroke-width="1.4"/>
+  <text x="1300" y="1066" class="card-title">CCD IK</text>
+  <text x="1300" y="1091" class="small">14 iterations · 0.001 tolerance · bone lengths unchanged</text>
+
+  <text x="49" y="1150" class="small">This is a control skeleton, not anatomical artwork. It indicates where the procedural controller places and constrains the rig.</text>
+  <text x="1470" y="1150" class="small">Unity units assumed ≈ metres</text>
+</svg>

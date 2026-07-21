@@ -144,6 +144,40 @@ namespace Dexter.Spider
         [Tooltip("Hard limit on the force-driven leg and body movement multiplier.")]
         [SerializeField, Range(1f, 6f)] private float maximumStepSpeedMultiplier = 4.0f;
 
+        [Header("Thumb Jump")]
+        [Tooltip("Dexter finger whose force magnitude triggers a forward jump.")]
+        [SerializeField] private DexterFinger jumpFinger = DexterFinger.Thumb;
+        [Tooltip("Thumb force magnitude required to start a jump.")]
+        [SerializeField, Min(0.001f)] private float minimumJumpForce = 0.15f;
+        [Tooltip("Fraction of the calibrated normal-jump force required to begin sampling a press. This reduces sensitivity while retaining small jumps.")]
+        [SerializeField, Range(0.05f, 0.75f)] private float calibratedJumpActivationFraction = 0.20f;
+        [Tooltip("Thumb force magnitude that produces the maximum jump distance and height.")]
+        [SerializeField, Min(0.001f)] private float forceForMaximumJump = 1.50f;
+        [Tooltip("Percentile of deliberate thumb movements used as the normal calibrated jump force.")]
+        [SerializeField, Range(0.5f, 0.9f)] private float thumbJumpCalibrationReferencePercentile = 0.65f;
+        [Tooltip("Final calibration time reserved for measuring the fully released thumb position.")]
+        [SerializeField, Min(0.5f)] private float thumbNeutralCalibrationSeconds = 2f;
+        [Tooltip("Thumb force must return below this value before another jump can trigger.")]
+        [SerializeField, Min(0f)] private float jumpReleaseForce = 0.08f;
+        [Tooltip("Short time used to capture the peak of a thumb press before committing to jump distance.")]
+        [SerializeField, Min(0.02f)] private float jumpForceSamplingWindow = 0.20f;
+        [SerializeField, Min(0f)] private float minimumJumpDistance = 0.25f;
+        [SerializeField, Min(0f)] private float maximumJumpDistance = 2.50f;
+        [SerializeField, Min(0f)] private float minimumJumpHeight = 0.40f;
+        [SerializeField, Min(0f)] private float maximumJumpHeight = 1.20f;
+        [Tooltip("Additional applied thumb force above the calibrated normal-jump force required for the strong jump.")]
+        [SerializeField, Min(0f)] private float strongJumpForceAboveCalibration = 0.30f;
+        [Tooltip("Forward-distance multiplier when applied thumb force exceeds the strong-jump threshold above calibrated rest.")]
+        [SerializeField, Min(1f)] private float strongJumpDistanceMultiplier = 2f;
+        [Tooltip("Air time at minimum thumb force. Stronger jumps remain airborne slightly longer.")]
+        [SerializeField, Min(0.1f)] private float minimumJumpDuration = 0.48f;
+        [Tooltip("Air time at maximum thumb force.")]
+        [SerializeField, Min(0.1f)] private float maximumJumpDuration = 0.78f;
+        [Tooltip("How far the rear legs extend behind the body during push-off.")]
+        [SerializeField, Min(0f)] private float airborneRearLegStretch = 0.80f;
+        [Tooltip("Brief lockout after landing before a new thumb press may jump.")]
+        [SerializeField, Min(0f)] private float jumpCooldown = 0.20f;
+
         [Header("Two-Finger Turning")]
         [Tooltip("Minimum post-scaled X input on both fingers before an iPad turn registers.")]
         [SerializeField, Min(0f)] private float turnActivationForce = 1f;
@@ -271,6 +305,12 @@ namespace Dexter.Spider
 
         private Vector2 leftBaseline;
         private Vector2 rightBaseline;
+        private Vector2 thumbJumpBaseline;
+        private readonly List<Vector2> thumbJumpCalibrationSamples =
+            new List<Vector2>(1024);
+        private readonly List<Vector2> thumbNeutralCalibrationSamples =
+            new List<Vector2>(256);
+        private float calibratedThumbJumpReferenceForce;
         private Vector2 leftBaselineSum;
         private Vector2 rightBaselineSum;
         private Vector2 leftBaselineSquareSum;
@@ -368,18 +408,41 @@ namespace Dexter.Spider
         private readonly List<float> dexterMovementCalibrationSamples =
             new List<float>(1024);
         private bool waitingForDexterMovementCalibration;
+        private bool dexterCalibrationStartConfirmed;
         private bool isDexterMovementCalibrating;
         private bool dexterMovementCalibrationComplete;
         private float dexterMovementCalibrationStart = -1f;
         private float dexterCalibrationCompleteMessageUntil = -1f;
         private float calibratedDexterReferenceForce = 1f;
         private long lastDexterMovementCalibrationSequence = long.MinValue;
+        private bool isJumping;
+        private bool jumpInputArmed;
+        private float jumpStartedAt = -1f;
+        private float activeJumpDuration;
+        private float activeJumpHeight;
+        private float activeJumpForce;
+        private float activeJumpDistance;
+        private bool activeJumpIsStrong;
+        private Vector2 currentThumbAppliedForce;
+        private int jumpGateState = 1;
+        private int jumpId;
+        private int jumpEventThisFrame;
+        private float lastCompletedJumpDistance;
+        private bool isSamplingJumpForce;
+        private float jumpForceSamplingStartedAt = -1f;
+        private float sampledJumpPeakForce;
+        private float lastJumpLandedAt = float.NegativeInfinity;
+        private Vector3 jumpStartPosition;
+        private Vector3 jumpLandingPosition;
+        private Vector3 jumpForward = Vector3.forward;
+        private Vector3 jumpUp = Vector3.up;
 
         public bool IsReceiving => receiver != null && receiver.HasRecentFrame;
         public bool IsTaring => isTaring;
         public bool IsDexterMovementCalibrating =>
             isDexterMovementCalibrating;
         public float ForwardSpeed => forwardSpeed;
+        public bool IsJumping => isJumping;
         public string TraceFilePath => traceFilePath;
 
         private void Awake()
@@ -397,6 +460,7 @@ namespace Dexter.Spider
                 BeginTare();
             else
                 UseUntaredRelayDefaults();
+            ResetJumpState();
             BeginDiagnosticTrace();
         }
 
@@ -404,12 +468,17 @@ namespace Dexter.Spider
         {
             waitingForDexterMovementCalibration =
                 calibrateDexterMovementOnStart;
+            dexterCalibrationStartConfirmed = false;
             isDexterMovementCalibrating = false;
             dexterMovementCalibrationComplete = false;
             dexterMovementCalibrationStart = -1f;
             dexterCalibrationCompleteMessageUntil = -1f;
             lastDexterMovementCalibrationSequence = long.MinValue;
             dexterMovementCalibrationSamples.Clear();
+            thumbJumpBaseline = Vector2.zero;
+            thumbJumpCalibrationSamples.Clear();
+            thumbNeutralCalibrationSamples.Clear();
+            calibratedThumbJumpReferenceForce = forceForMaximumJump;
             calibratedDexterReferenceForce = Mathf.Max(
                 minimumDexterCalibrationForce,
                 minimumSpeedDisplacement / 5f);
@@ -511,6 +580,7 @@ namespace Dexter.Spider
                 currentRightLegPushDistance);
 
             WriteDiagnosticTraceRow();
+            jumpEventThisFrame = 0;
         }
 
         private void OnGUI()
@@ -518,15 +588,18 @@ namespace Dexter.Spider
             bool waitingForDevice = waitingForDexterMovementCalibration &&
                 (receiver == null || !receiver.HasRecentFrame ||
                  !IsPhysicalDexterFrame(receiver.LatestFrame));
+            bool waitingForStart = waitingForDexterMovementCalibration &&
+                !waitingForDevice && !dexterCalibrationStartConfirmed;
             bool showComplete = dexterMovementCalibrationComplete &&
                 Time.realtimeSinceStartup <=
                 dexterCalibrationCompleteMessageUntil;
-            if (!waitingForDevice && !isDexterMovementCalibrating &&
+            if (!waitingForDevice && !waitingForStart &&
+                !isDexterMovementCalibrating &&
                 !showComplete)
                 return;
 
             float panelWidth = Mathf.Min(620f, Screen.width - 40f);
-            float panelHeight = 150f;
+            float panelHeight = waitingForStart ? 220f : 150f;
             var panel = new Rect(
                 (Screen.width - panelWidth) * 0.5f,
                 Mathf.Max(20f, Screen.height * 0.12f),
@@ -562,6 +635,33 @@ namespace Dexter.Spider
                     "No live Dexter force frames are arriving yet. Check the device/relay connection; calibration will begin automatically when data arrives.",
                     messageStyle);
             }
+            else if (waitingForStart)
+            {
+                GUI.Label(
+                    new Rect(panel.x + 20f, panel.y + 10f,
+                        panel.width - 40f, 42f),
+                    "DEXTER READY",
+                    titleStyle);
+                GUI.Label(
+                    new Rect(panel.x + 30f, panel.y + 52f,
+                        panel.width - 60f, 72f),
+                    "Place your hand in the device with thumb, index, and middle fingers positioned comfortably. Calibration will not begin until you are ready.",
+                    messageStyle);
+                var buttonStyle = new GUIStyle(GUI.skin.button)
+                {
+                    fontSize = Mathf.Clamp(Screen.height / 48, 17, 25),
+                    fontStyle = FontStyle.Bold
+                };
+                if (GUI.Button(
+                        new Rect(panel.x + panel.width * 0.20f,
+                            panel.y + 142f,
+                            panel.width * 0.60f, 54f),
+                        "START CALIBRATION",
+                        buttonStyle))
+                {
+                    dexterCalibrationStartConfirmed = true;
+                }
+            }
             else if (isDexterMovementCalibrating)
             {
                 float elapsed = Mathf.Max(
@@ -570,15 +670,23 @@ namespace Dexter.Spider
                     dexterMovementCalibrationStart);
                 float remaining = Mathf.Max(
                     0f, calibrationDurationSeconds - elapsed);
+                bool measuringThumbNeutral = remaining <=
+                    Mathf.Min(
+                        thumbNeutralCalibrationSeconds,
+                        calibrationDurationSeconds * 0.5f);
                 GUI.Label(
                     new Rect(panel.x + 20f, panel.y + 12f,
                         panel.width - 40f, 42f),
-                    $"CALIBRATING DEXTER  {remaining:0.0}s",
+                    measuringThumbNeutral
+                        ? $"RELEASE THUMB NOW  {remaining:0.0}s"
+                        : $"CALIBRATING DEXTER  {remaining:0.0}s",
                     titleStyle);
                 GUI.Label(
                     new Rect(panel.x + 30f, panel.y + 58f,
                         panel.width - 60f, 72f),
-                    "Place your index and middle fingers in the device, then alternate them naturally as if you are walking.",
+                    measuringThumbNeutral
+                        ? "Keep the thumb fully released until calibration finishes. You may continue alternating index and middle."
+                        : "Alternate index and middle as if walking. Repeatedly press and release the thumb using the force you want for a normal jump.",
                     messageStyle);
             }
             else
@@ -644,10 +752,15 @@ namespace Dexter.Spider
             row.Append("unity_realtime_s,unity_time_s,unity_frame,sequence,frame_age_s,has_recent,is_taring,");
             row.Append("thumb_raw,index_raw,middle_raw,ring_raw,pinky_raw,");
             row.Append("thumb_fx,thumb_fy,index_fx,index_fy,middle_fx,middle_fy,ring_fx,ring_fy,pinky_fx,pinky_fy,");
-            row.Append("index_baseline_x,index_baseline_y,middle_baseline_x,middle_baseline_y,");
+            row.Append("index_baseline_x,index_baseline_y,middle_baseline_x,middle_baseline_y,thumb_jump_baseline_x,thumb_jump_baseline_y,");
             row.Append("index_activation_threshold,middle_activation_threshold,index_release_threshold,middle_release_threshold,");
             row.Append("pressed_finger,last_active_finger,travel_direction,forward_speed,target_forward_distance,current_forward_distance,");
             row.Append("turn_input,turn_speed_deg_s,yaw_degrees,");
+            row.Append("thumb_applied_fx,thumb_applied_fy,thumb_applied_magnitude,");
+            row.Append("jump_input_armed,is_sampling_jump_force,sampled_jump_peak_force,jump_sampling_elapsed_s,jump_gate_state,jump_gate_reason,jump_activation_force,jump_release_force,calibrated_jump_reference_force,strong_jump_delta_force,strong_jump_trigger_force,");
+            row.Append("jump_id,jump_event,jump_event_name,is_jumping,jump_force,jump_progress,jump_distance,strong_jump,");
+            row.Append("jump_start_x,jump_start_y,jump_start_z,jump_landing_x,jump_landing_y,jump_landing_z,");
+            row.Append("jump_current_distance,last_completed_jump_distance,");
             row.Append("left_gait_phase,left_target_gait_phase,right_gait_phase,right_target_gait_phase,");
             row.Append("spider_x,spider_y,spider_z,body_x,body_y,body_z,body_pitch,body_roll,body_yaw");
             row.Append(",surface_found,entered_climb,corner_transition,root_transition_active,climb_anchor_active");
@@ -685,7 +798,7 @@ namespace Dexter.Spider
                 return;
 
             long sequence = frame != null ? frame.sequence : Time.frameCount;
-            if (sequence == lastTracedSequence)
+            if (sequence == lastTracedSequence && jumpEventThisFrame == 0)
                 return;
             lastTracedSequence = sequence;
             var row = new StringBuilder(4096);
@@ -715,6 +828,7 @@ namespace Dexter.Spider
 
             AppendVector2(row, leftBaseline);
             AppendVector2(row, rightBaseline);
+            AppendVector2(row, thumbJumpBaseline);
             AppendNumber(row, leftAdaptiveActivationThreshold);
             AppendNumber(row, rightAdaptiveActivationThreshold);
             AppendNumber(row, leftAdaptiveReleaseThreshold);
@@ -728,6 +842,42 @@ namespace Dexter.Spider
             AppendNumber(row, turnInput);
             AppendNumber(row, currentTurnSpeed);
             AppendNumber(row, currentYawDegrees);
+            AppendVector2(row, currentThumbAppliedForce);
+            AppendNumber(row, currentThumbAppliedForce.magnitude);
+            AppendBoolean(row, jumpInputArmed);
+            AppendBoolean(row, isSamplingJumpForce);
+            AppendNumber(row, sampledJumpPeakForce);
+            AppendNumber(row, isSamplingJumpForce
+                ? Mathf.Max(0f, Time.time - jumpForceSamplingStartedAt)
+                : 0f);
+            AppendInteger(row, jumpGateState);
+            AppendCsvText(row, GetJumpGateReason(jumpGateState));
+            AppendNumber(row, GetActiveJumpActivationForce());
+            AppendNumber(row, GetActiveJumpReleaseForce());
+            AppendNumber(row, calibratedThumbJumpReferenceForce);
+            AppendNumber(row, strongJumpForceAboveCalibration);
+            AppendNumber(row, GetStrongJumpTriggerForce());
+            AppendInteger(row, jumpId);
+            AppendInteger(row, jumpEventThisFrame);
+            AppendCsvText(row, jumpEventThisFrame == 1
+                ? "started"
+                : jumpEventThisFrame == 2 ? "landed" : string.Empty);
+            AppendBoolean(row, isJumping);
+            AppendNumber(row, activeJumpForce);
+            AppendNumber(row, isJumping
+                ? Mathf.Clamp01((Time.time - jumpStartedAt) /
+                    Mathf.Max(0.1f, activeJumpDuration))
+                : 0f);
+            AppendNumber(row, activeJumpDistance);
+            AppendBoolean(row, activeJumpIsStrong);
+            AppendVector3(row, jumpStartPosition);
+            AppendVector3(row, jumpLandingPosition);
+            AppendNumber(row, jumpId > 0
+                ? Vector3.ProjectOnPlane(
+                    transform.position - jumpStartPosition,
+                    jumpUp).magnitude
+                : 0f);
+            AppendNumber(row, lastCompletedJumpDistance);
             AppendNumber(row, leftGaitPhase);
             AppendNumber(row, targetLeftGaitPhase);
             AppendNumber(row, rightGaitPhase);
@@ -855,6 +1005,27 @@ namespace Dexter.Spider
             row.Append(',').Append(value ? '1' : '0');
         }
 
+        private static void AppendCsvText(StringBuilder row, string value)
+        {
+            row.Append(',').Append('"').Append(
+                (value ?? string.Empty).Replace("\"", "\"\"")).Append('"');
+        }
+
+        private static string GetJumpGateReason(int state)
+        {
+            switch (state)
+            {
+                case 0: return "triggered";
+                case 1: return "no_physical_thumb_sample";
+                case 2: return "below_activation_force";
+                case 3: return "waiting_for_release";
+                case 4: return "landing_cooldown";
+                case 5: return "already_airborne";
+                case 6: return "sampling_press_peak";
+                default: return "unknown";
+            }
+        }
+
         [ContextMenu("Tare Dexter Forces")]
         public void BeginTare()
         {
@@ -929,6 +1100,7 @@ namespace Dexter.Spider
             rightAdaptiveActivationThreshold = alternationForceThreshold;
             leftAdaptiveReleaseThreshold = alternationReleaseThreshold;
             rightAdaptiveReleaseThreshold = alternationReleaseThreshold;
+            ResetJumpState();
             ResetWorldFootTargets(leftLegs);
             ResetWorldFootTargets(rightLegs);
         }
@@ -1167,6 +1339,8 @@ namespace Dexter.Spider
 
             if (waitingForDexterMovementCalibration)
             {
+                if (!dexterCalibrationStartConfirmed)
+                    return;
                 waitingForDexterMovementCalibration = false;
                 isDexterMovementCalibrating = true;
                 dexterMovementCalibrationStart =
@@ -1195,6 +1369,21 @@ namespace Dexter.Spider
                         Mathf.Abs(rightCalibrationForce.y));
                     hasForce = true;
                 }
+                if (TryReadForce(
+                        jumpFinger, out Vector2 thumbCalibrationForce))
+                {
+                    thumbJumpCalibrationSamples.Add(
+                        thumbCalibrationForce);
+                    float elapsed = Time.realtimeSinceStartup -
+                                    dexterMovementCalibrationStart;
+                    float neutralWindow = Mathf.Min(
+                        thumbNeutralCalibrationSeconds,
+                        calibrationDurationSeconds * 0.5f);
+                    if (elapsed >= calibrationDurationSeconds -
+                        neutralWindow)
+                        thumbNeutralCalibrationSamples.Add(
+                            thumbCalibrationForce);
+                }
 
                 if (hasForce && !float.IsNaN(strongestY) &&
                     !float.IsInfinity(strongestY))
@@ -1211,6 +1400,7 @@ namespace Dexter.Spider
 
         private void CompleteDexterMovementCalibration()
         {
+            CompleteThumbJumpCalibration();
             if (dexterMovementCalibrationSamples.Count > 0)
             {
                 dexterMovementCalibrationSamples.Sort();
@@ -1240,8 +1430,82 @@ namespace Dexter.Spider
                 $"complete: normal walking force=" +
                 $"{calibratedDexterReferenceForce:F3}, " +
                 $"maximum-speed force=" +
-                $"{GetActiveMaximumSpeedDisplacement():F3}.",
+                $"{GetActiveMaximumSpeedDisplacement():F3}, " +
+                $"thumb rest=({thumbJumpBaseline.x:F3}, " +
+                $"{thumbJumpBaseline.y:F3}), " +
+                $"normal thumb jump=" +
+                $"{calibratedThumbJumpReferenceForce:F3}, " +
+                $"2x threshold={GetStrongJumpTriggerForce():F3}.",
                 this);
+        }
+
+        private void CompleteThumbJumpCalibration()
+        {
+            if (thumbJumpCalibrationSamples.Count == 0)
+            {
+                thumbJumpBaseline = Vector2.zero;
+                calibratedThumbJumpReferenceForce =
+                    Mathf.Max(minimumJumpForce, forceForMaximumJump);
+                return;
+            }
+
+            List<Vector2> neutralSource =
+                thumbNeutralCalibrationSamples.Count > 0
+                    ? thumbNeutralCalibrationSamples
+                    : thumbJumpCalibrationSamples;
+            int neutralStart = thumbNeutralCalibrationSamples.Count > 0
+                ? 0
+                : Mathf.FloorToInt(neutralSource.Count * 0.8f);
+            var xSamples = new List<float>(
+                neutralSource.Count - neutralStart);
+            var ySamples = new List<float>(
+                neutralSource.Count - neutralStart);
+            for (int i = neutralStart; i < neutralSource.Count; i++)
+            {
+                xSamples.Add(neutralSource[i].x);
+                ySamples.Add(neutralSource[i].y);
+            }
+            xSamples.Sort();
+            ySamples.Sort();
+            thumbJumpBaseline = new Vector2(
+                GetSortedMedian(xSamples),
+                GetSortedMedian(ySamples));
+
+            var appliedSamples = new List<float>(
+                thumbJumpCalibrationSamples.Count);
+            for (int i = 0; i < thumbJumpCalibrationSamples.Count; i++)
+            {
+                float appliedMagnitude = Vector2.Distance(
+                    thumbJumpCalibrationSamples[i],
+                    thumbJumpBaseline);
+                if (appliedMagnitude >= minimumJumpForce)
+                    appliedSamples.Add(appliedMagnitude);
+            }
+            appliedSamples.Sort();
+            if (appliedSamples.Count == 0)
+            {
+                calibratedThumbJumpReferenceForce =
+                    Mathf.Max(minimumJumpForce, forceForMaximumJump);
+                return;
+            }
+
+            int referenceIndex = Mathf.RoundToInt(
+                (appliedSamples.Count - 1) *
+                thumbJumpCalibrationReferencePercentile);
+            calibratedThumbJumpReferenceForce = Mathf.Max(
+                minimumJumpForce,
+                appliedSamples[Mathf.Clamp(
+                    referenceIndex, 0, appliedSamples.Count - 1)]);
+        }
+
+        private static float GetSortedMedian(List<float> values)
+        {
+            if (values == null || values.Count == 0)
+                return 0f;
+            int middle = values.Count / 2;
+            return values.Count % 2 == 0
+                ? (values[middle - 1] + values[middle]) * 0.5f
+                : values[middle];
         }
 
         private void ResetInputStateForMovementCalibration()
@@ -1271,6 +1535,7 @@ namespace Dexter.Spider
             rightFingerMimicLift = 0f;
             currentLeftLegPushDistance = 0f;
             currentRightLegPushDistance = 0f;
+            ResetJumpState();
             targetForwardDistance = currentForwardDistance;
             lastAppliedForwardDistance = currentForwardDistance;
             ResetWorldFootTargets(leftLegs);
@@ -1291,6 +1556,29 @@ namespace Dexter.Spider
 
             return HasRawSamples(frame.fingers.index) ||
                    HasRawSamples(frame.fingers.middle);
+        }
+
+        private void ResetJumpState()
+        {
+            isJumping = false;
+            // A real below-threshold sample must arm the first jump. This
+            // prevents residual load at startup from launching the spider.
+            jumpInputArmed = false;
+            jumpStartedAt = -1f;
+            activeJumpDuration = 0f;
+            activeJumpHeight = 0f;
+            activeJumpForce = 0f;
+            activeJumpDistance = 0f;
+            activeJumpIsStrong = false;
+            currentThumbAppliedForce = Vector2.zero;
+            jumpGateState = 1;
+            jumpId = 0;
+            jumpEventThisFrame = 0;
+            lastCompletedJumpDistance = 0f;
+            isSamplingJumpForce = false;
+            jumpForceSamplingStartedAt = -1f;
+            sampledJumpPeakForce = 0f;
+            lastJumpLandedAt = float.NegativeInfinity;
         }
 
         private static bool HasRawSamples(
@@ -1356,8 +1644,11 @@ namespace Dexter.Spider
 
         private void UpdateDisplacements()
         {
+            jumpEventThisFrame = 0;
             Vector2 leftForce = Vector2.zero;
             Vector2 rightForce = Vector2.zero;
+            Vector2 jumpForce = Vector2.zero;
+            bool hasJumpForce = false;
 
             if (receiver.HasRecentFrame && !IsTaring &&
                 !isDexterMovementCalibrating)
@@ -1366,6 +1657,13 @@ namespace Dexter.Spider
                     leftForce = measuredLeftForce - (hasBaseline ? leftBaseline : Vector2.zero);
                 if (TryReadForce(rightLegFinger, out Vector2 measuredRightForce))
                     rightForce = measuredRightForce - (hasBaseline ? rightBaseline : Vector2.zero);
+                if (IsPhysicalDexterFrame(receiver.LatestFrame))
+                {
+                    hasJumpForce = TryReadForce(
+                        jumpFinger, out Vector2 measuredJumpForce);
+                    if (hasJumpForce)
+                        jumpForce = measuredJumpForce - thumbJumpBaseline;
+                }
             }
 
             if (temporalSmoothingWindow > 0f)
@@ -1382,9 +1680,328 @@ namespace Dexter.Spider
 
             bool isTurning = UpdateTurning(smoothedLeftForce, smoothedRightForce);
             UpdateAlternatingLocomotion(smoothedLeftForce, smoothedRightForce, isTurning);
-            ApplyLocomotion();
+            if (hasJumpForce)
+            {
+                currentThumbAppliedForce = jumpForce;
+                UpdateThumbJump(jumpForce.magnitude);
+            }
+            else
+            {
+                currentThumbAppliedForce = Vector2.zero;
+                jumpGateState = 1;
+            }
+            if (isJumping)
+                ApplyJumpLocomotion();
+            else
+                ApplyLocomotion();
 
             UpdateAlternatingGait();
+            if (isJumping)
+                UpdateAirborneLegTargets();
+        }
+
+        private void UpdateThumbJump(float forceMagnitude)
+        {
+            float releaseForce = GetActiveJumpReleaseForce();
+            float activationForce = GetActiveJumpActivationForce();
+
+            if (isJumping)
+            {
+                if (forceMagnitude <= releaseForce)
+                    jumpInputArmed = true;
+                jumpGateState = 5;
+                return;
+            }
+
+            if (isSamplingJumpForce)
+            {
+                sampledJumpPeakForce = Mathf.Max(
+                    sampledJumpPeakForce, forceMagnitude);
+                bool wasReleased = forceMagnitude <= releaseForce;
+                bool samplingComplete = Time.time -
+                    jumpForceSamplingStartedAt >=
+                    jumpForceSamplingWindow;
+                if (!wasReleased && !samplingComplete)
+                {
+                    jumpGateState = 6;
+                    return;
+                }
+
+                float capturedPeak = sampledJumpPeakForce;
+                isSamplingJumpForce = false;
+                jumpForceSamplingStartedAt = -1f;
+                sampledJumpPeakForce = 0f;
+                jumpInputArmed = wasReleased;
+                if (capturedPeak < activationForce)
+                {
+                    jumpGateState = 2;
+                    return;
+                }
+
+                float capturedStrength = Mathf.InverseLerp(
+                    activationForce,
+                    GetStrongJumpTriggerForce(),
+                    capturedPeak);
+                jumpGateState = 0;
+                StartJump(capturedPeak, capturedStrength);
+                return;
+            }
+
+            if (!jumpInputArmed)
+            {
+                if (forceMagnitude <= releaseForce)
+                    jumpInputArmed = true;
+                jumpGateState = 3;
+                return;
+            }
+            if (forceMagnitude < activationForce)
+            {
+                jumpGateState = 2;
+                return;
+            }
+            if (Time.time - lastJumpLandedAt < jumpCooldown)
+            {
+                jumpGateState = 4;
+                return;
+            }
+
+            // Do not commit distance on the noisy rising-edge sample. Capture
+            // the peak of this deliberate press, or launch early on release.
+            isSamplingJumpForce = true;
+            jumpForceSamplingStartedAt = Time.time;
+            sampledJumpPeakForce = forceMagnitude;
+            jumpGateState = 6;
+        }
+
+        private float GetStrongJumpTriggerForce()
+        {
+            float reference = dexterMovementCalibrationComplete
+                ? calibratedThumbJumpReferenceForce
+                : forceForMaximumJump;
+            return Mathf.Max(
+                GetActiveJumpActivationForce() + 0.001f,
+                reference + strongJumpForceAboveCalibration);
+        }
+
+        private float GetActiveJumpActivationForce()
+        {
+            float reference = dexterMovementCalibrationComplete
+                ? calibratedThumbJumpReferenceForce
+                : forceForMaximumJump;
+            return Mathf.Max(
+                minimumJumpForce,
+                reference * calibratedJumpActivationFraction);
+        }
+
+        private float GetActiveJumpReleaseForce()
+        {
+            float reference = dexterMovementCalibrationComplete
+                ? calibratedThumbJumpReferenceForce
+                : forceForMaximumJump;
+            return Mathf.Max(
+                jumpReleaseForce,
+                Mathf.Min(reference * 0.20f,
+                    GetActiveJumpActivationForce() * 0.40f));
+        }
+
+        private void StartJump(float forceMagnitude, float strength)
+        {
+            if (!hasLocomotionWorldPosition)
+            {
+                locomotionWorldPosition = transform.position;
+                hasLocomotionWorldPosition = true;
+            }
+
+            jumpInputArmed = false;
+            isJumping = true;
+            jumpId++;
+            jumpEventThisFrame = 1;
+            activeJumpForce = forceMagnitude;
+            jumpStartedAt = Time.time;
+            activeJumpDuration = Mathf.Lerp(
+                minimumJumpDuration, maximumJumpDuration, strength);
+            activeJumpHeight = Mathf.Lerp(
+                minimumJumpHeight, maximumJumpHeight, strength);
+            float jumpDistance = Mathf.Lerp(
+                minimumJumpDistance, maximumJumpDistance, strength);
+            activeJumpIsStrong = forceMagnitude >=
+                                 GetStrongJumpTriggerForce();
+            if (activeJumpIsStrong)
+                jumpDistance *= strongJumpDistanceMultiplier;
+            activeJumpDistance = jumpDistance;
+
+            jumpStartPosition = locomotionWorldPosition;
+            jumpUp = traceSupportNormal.sqrMagnitude > 0.25f
+                ? traceSupportNormal.normalized
+                : transform.up;
+            if (jumpUp.sqrMagnitude < 0.25f)
+                jumpUp = Vector3.up;
+            jumpForward = terrainForces != null
+                ? terrainForces.GetSurfaceTravelDirection(
+                    GetTerrainSamplingPosition(), GetRigForward())
+                : GetRigForward();
+            jumpForward = Vector3.ProjectOnPlane(
+                jumpForward, jumpUp).normalized;
+            if (jumpForward.sqrMagnitude < 0.25f)
+                jumpForward = Vector3.ProjectOnPlane(
+                    GetRigForward(), jumpUp).normalized;
+
+            jumpLandingPosition = jumpStartPosition +
+                                  jumpForward * jumpDistance;
+            if (terrainForces != null &&
+                terrainForces.TryGetTerrainSurfaceFrame(
+                    jumpLandingPosition,
+                    out Vector3 landingSurface,
+                    out Vector3 landingNormal))
+            {
+                jumpLandingPosition = landingSurface +
+                    landingNormal * terrainRootClearance;
+            }
+
+            // The jump owns root translation until landing. Discard walking
+            // distance accumulated in the air so it cannot cause a landing pop.
+            forwardSpeed = 0f;
+            lastAppliedForwardDistance = currentForwardDistance;
+            gaitDriveActive = false;
+            hasClimbSurfaceAnchor = false;
+            rootPositionTransitionActive = false;
+            CaptureRecoveryStarts(leftLegs);
+            CaptureRecoveryStarts(rightLegs);
+        }
+
+        private void ApplyJumpLocomotion()
+        {
+            float duration = Mathf.Max(0.1f, activeJumpDuration);
+            float progress = Mathf.Clamp01(
+                (Time.time - jumpStartedAt) / duration);
+            float travelProgress = SmoothStep01(progress);
+            Vector3 basePosition = Vector3.Lerp(
+                jumpStartPosition, jumpLandingPosition, travelProgress);
+            Vector3 desiredPosition = basePosition + jumpUp *
+                (4f * activeJumpHeight * progress * (1f - progress));
+            Vector3 resolvedPosition = ResolveObstacleMovement(
+                locomotionWorldPosition, desiredPosition);
+            if ((resolvedPosition - desiredPosition).sqrMagnitude > 0.0001f)
+            {
+                // Retarget the landing to the blocked side of a solid object;
+                // otherwise the final frame could bypass the collision guard.
+                jumpLandingPosition.x = resolvedPosition.x;
+                jumpLandingPosition.z = resolvedPosition.z;
+            }
+            locomotionWorldPosition = resolvedPosition;
+            transform.position = resolvedPosition;
+            lastAppliedForwardDistance = currentForwardDistance;
+
+            if (progress < 1f)
+                return;
+
+            isJumping = false;
+            lastJumpLandedAt = Time.time;
+            locomotionWorldPosition = jumpLandingPosition;
+            transform.position = jumpLandingPosition;
+            lastCompletedJumpDistance = Vector3.ProjectOnPlane(
+                transform.position - jumpStartPosition,
+                jumpUp).magnitude;
+            jumpEventThisFrame = 2;
+            jumpGateState = 3;
+            PlaceFeetAtCurrentStance(leftLegs);
+            PlaceFeetAtCurrentStance(rightLegs);
+        }
+
+        private void UpdateAirborneLegTargets()
+        {
+            float progress = Mathf.Clamp01(
+                (Time.time - jumpStartedAt) /
+                Mathf.Max(0.1f, activeJumpDuration));
+            float poseOut = 1f - SmoothStep01(
+                Mathf.InverseLerp(0.72f, 1f, progress));
+            float poseStrength = poseOut;
+            PoseAirborneSide(leftLegs, poseStrength);
+            PoseAirborneSide(rightLegs, poseStrength);
+        }
+
+        private void PoseAirborneSide(LegChain[] legs, float strength)
+        {
+            if (legs == null)
+                return;
+
+            for (int row = 0; row < legs.Length; row++)
+            {
+                LegChain leg = legs[row];
+                Vector3 naturalTarget = rigSpace.TransformPoint(
+                    leg.RestRigLocalTarget);
+                float rearWeight = row == legs.Length - 1
+                    ? 1f
+                    : row == legs.Length - 2 ? 0.45f : 0f;
+                Vector3 stretchedTarget = naturalTarget;
+                if (rearWeight > 0f && leg.Joints.Length > 0)
+                {
+                    // Build the airborne reach from the hip attached to the
+                    // torso. A distant target along this complete-chain line
+                    // makes every joint open together instead of moving only
+                    // the lower leg beyond its knee.
+                    Vector3 hip = leg.Joints[0].position;
+                    Vector3 authoredDirection =
+                        (naturalTarget - hip).normalized;
+                    Vector3 torsoOutward = Vector3.ProjectOnPlane(
+                        hip - body.position, jumpUp).normalized;
+                    Vector3 straightDirection =
+                        (authoredDirection + torsoOutward * 0.45f -
+                         jumpForward * (0.65f * rearWeight)).normalized;
+                    if (straightDirection.sqrMagnitude < 0.25f)
+                        straightDirection = authoredDirection;
+                    float fullLegLength = GetLegChainLength(leg);
+                    float straightReach = fullLegLength +
+                        airborneRearLegStretch * rearWeight * strength;
+                    stretchedTarget = hip +
+                                      straightDirection * straightReach;
+                }
+                // The target may sit just beyond ordinary stance reach so the
+                // fixed-length IK chain straightens instead of remaining bent.
+                leg.WorldTarget = stretchedTarget;
+                leg.WasSwinging = false;
+                leg.IsRecoveringLag = false;
+            }
+        }
+
+        private static float GetLegChainLength(LegChain leg)
+        {
+            if (leg == null || leg.Joints == null ||
+                leg.Joints.Length == 0 || leg.Effector == null)
+                return 0f;
+
+            float length = 0f;
+            for (int i = 0; i < leg.Joints.Length - 1; i++)
+                length += Vector3.Distance(
+                    leg.Joints[i].position,
+                    leg.Joints[i + 1].position);
+            length += Vector3.Distance(
+                leg.Joints[leg.Joints.Length - 1].position,
+                leg.Effector.position);
+            return length;
+        }
+
+        private void PlaceFeetAtCurrentStance(LegChain[] legs)
+        {
+            if (legs == null)
+                return;
+
+            for (int i = 0; i < legs.Length; i++)
+            {
+                LegChain leg = legs[i];
+                Vector3 target = rigSpace.TransformPoint(
+                    leg.RestRigLocalTarget);
+                if (TryGetFootSurfaceTarget(
+                        target, leg.GroundClearance,
+                        out Vector3 groundedTarget, out _))
+                    target = groundedTarget;
+                leg.WorldTarget = target;
+                leg.SwingStartWorldTarget = target;
+                leg.SwingEndWorldTarget = target;
+                leg.WasSwinging = false;
+                leg.IsRecoveringLag = false;
+                leg.LagRecoveryProgress = 0f;
+            }
         }
 
         private void UpdateAlternatingLocomotion(Vector2 leftForce, Vector2 rightForce, bool isTurning)
@@ -2887,7 +3504,7 @@ namespace Dexter.Spider
                                        pushOffset;
                 solvedTarget = ConstrainFootAgainstObstacles(
                     leg, solvedTarget, obstacleSkin);
-                if (TryGetFootSurfaceTarget(
+                if (!isJumping && TryGetFootSurfaceTarget(
                         solvedTarget, leg.GroundClearance,
                         out Vector3 surfaceTarget, out Vector3 surfaceNormal))
                 {
@@ -2901,7 +3518,7 @@ namespace Dexter.Spider
                 if (rootPositionTransitionActive)
                     solvedTarget = ConstrainTargetReach(leg, solvedTarget);
                 SolveCcd(leg, solvedTarget);
-                if (TryGetFootSurfaceTarget(
+                if (!isJumping && TryGetFootSurfaceTarget(
                         leg.Effector.position, leg.GroundClearance,
                         out Vector3 solvedContact, out Vector3 solvedNormal))
                 {
@@ -3114,6 +3731,7 @@ namespace Dexter.Spider
         {
             leftLegFinger = DexterFinger.Index;
             rightLegFinger = DexterFinger.Middle;
+            jumpFinger = DexterFinger.Thumb;
             ApplyResponsiveMovementDefaults();
             calibrationDurationSeconds = Mathf.Max(0.25f, calibrationDurationSeconds);
             dexterCalibrationReferencePercentile = Mathf.Clamp(
@@ -3200,6 +3818,36 @@ namespace Dexter.Spider
                 minimumStepSpeedMultiplier, 0.1f, 2f);
             maximumStepSpeedMultiplier = Mathf.Clamp(
                 maximumStepSpeedMultiplier, 1f, 6f);
+            minimumJumpForce = Mathf.Max(0.001f, minimumJumpForce);
+            calibratedJumpActivationFraction = Mathf.Clamp(
+                calibratedJumpActivationFraction, 0.05f, 0.75f);
+            forceForMaximumJump = Mathf.Max(
+                minimumJumpForce + 0.001f, forceForMaximumJump);
+            thumbJumpCalibrationReferencePercentile = Mathf.Clamp(
+                thumbJumpCalibrationReferencePercentile, 0.5f, 0.9f);
+            thumbNeutralCalibrationSeconds = Mathf.Clamp(
+                thumbNeutralCalibrationSeconds,
+                0.5f,
+                calibrationDurationSeconds * 0.5f);
+            jumpReleaseForce = Mathf.Clamp(
+                jumpReleaseForce, 0f, minimumJumpForce * 0.95f);
+            jumpForceSamplingWindow = Mathf.Max(
+                0.02f, jumpForceSamplingWindow);
+            minimumJumpDistance = Mathf.Max(0f, minimumJumpDistance);
+            maximumJumpDistance = Mathf.Max(
+                minimumJumpDistance, maximumJumpDistance);
+            minimumJumpHeight = Mathf.Max(0f, minimumJumpHeight);
+            maximumJumpHeight = Mathf.Max(
+                minimumJumpHeight, maximumJumpHeight);
+            strongJumpForceAboveCalibration = Mathf.Max(
+                0f, strongJumpForceAboveCalibration);
+            strongJumpDistanceMultiplier = Mathf.Max(
+                1f, strongJumpDistanceMultiplier);
+            minimumJumpDuration = Mathf.Max(0.1f, minimumJumpDuration);
+            maximumJumpDuration = Mathf.Max(
+                minimumJumpDuration, maximumJumpDuration);
+            airborneRearLegStretch = Mathf.Max(0f, airborneRearLegStretch);
+            jumpCooldown = Mathf.Max(0f, jumpCooldown);
             turnActivationForce = Mathf.Max(0f, turnActivationForce);
             turnAxisDominanceRatio = Mathf.Clamp01(turnAxisDominanceRatio);
             turnMinimumSpeedDisplacement = Mathf.Max(

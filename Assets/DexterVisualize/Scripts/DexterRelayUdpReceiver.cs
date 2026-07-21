@@ -52,7 +52,7 @@ namespace Dexter.Visualize
     public sealed class DexterRelayUdpReceiver : MonoBehaviour
     {
         [Header("Relay")]
-        [SerializeField] private string serverHost = "10.40.49.105";
+        [SerializeField] private string serverHost = "10.20.21.245";
         [SerializeField] private int serverPort = 45678;
 
         [Header("Protocol")]

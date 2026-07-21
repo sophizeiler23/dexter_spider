@@ -559,7 +559,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: f0e7e304c3ff4e9681a2a96d03311279, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Dexter.Visualize.DexterRelayUdpReceiver
-  serverHost: 10.40.49.105
+  serverHost: 10.20.21.245
   serverPort: 45678
   subscribeIntervalSeconds: 2
   staleAfterSeconds: 2.5

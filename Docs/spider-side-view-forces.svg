@@ -1,0 +1,247 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1240" viewBox="0 0 1800 1240" role="img" aria-labelledby="title desc">
+  <title id="title">Spider side-view force arrows</title>
+  <desc id="desc">A side view of the procedural spider on a slope. Arrows show gravity at the body, positional normal reactions and traction at planted feet, passive surface resistance, commanded root travel, a swing-foot IK target, cadence-driven body tipping, and conditional obstacle contact. A legend explains every arrow.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#07111f"/>
+      <stop offset="1" stop-color="#111d32"/>
+    </linearGradient>
+    <linearGradient id="ground" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#173d31"/>
+      <stop offset="1" stop-color="#0b251e"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#00040b" flood-opacity="0.5"/>
+    </filter>
+    <marker id="orangeArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#fbbf24"/>
+    </marker>
+    <marker id="greenArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#34d399"/>
+    </marker>
+    <marker id="cyanArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#22d3ee"/>
+    </marker>
+    <marker id="pinkArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#fb7185"/>
+    </marker>
+    <marker id="violetArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#a78bfa"/>
+    </marker>
+    <marker id="blueArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#60a5fa"/>
+    </marker>
+    <marker id="redArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#f87171"/>
+    </marker>
+    <style>
+      .title { font: 700 36px Inter, Segoe UI, sans-serif; fill: #f8fafc; }
+      .subtitle { font: 400 17px Inter, Segoe UI, sans-serif; fill: #aebed3; }
+      .section { font: 700 20px Inter, Segoe UI, sans-serif; fill: #eef5ff; letter-spacing: 1px; }
+      .card-title { font: 700 18px Inter, Segoe UI, sans-serif; fill: #f8fafc; }
+      .body { font: 400 14px Inter, Segoe UI, sans-serif; fill: #ced9e8; }
+      .small { font: 400 12.5px Inter, Segoe UI, sans-serif; fill: #a8b7cc; }
+      .label { font: 700 14px Inter, Segoe UI, sans-serif; paint-order: stroke; stroke: #091426; stroke-width: 5px; stroke-linejoin: round; }
+      .formula { font: 500 14px ui-monospace, SFMono-Regular, Consolas, monospace; fill: #d8f7eb; }
+      .panel { fill: #0c1729; stroke: #2e4260; stroke-width: 1.5; }
+      .legend-card { fill: #111e33; stroke: #344966; stroke-width: 1.3; }
+      .orange { fill: none; stroke: #fbbf24; stroke-width: 5; marker-end: url(#orangeArrow); }
+      .green { fill: none; stroke: #34d399; stroke-width: 5; marker-end: url(#greenArrow); }
+      .cyan { fill: none; stroke: #22d3ee; stroke-width: 5; marker-end: url(#cyanArrow); }
+      .pink { fill: none; stroke: #fb7185; stroke-width: 5; marker-end: url(#pinkArrow); }
+      .violet { fill: none; stroke: #a78bfa; stroke-width: 5; marker-end: url(#violetArrow); }
+      .blue { fill: none; stroke: #60a5fa; stroke-width: 5; marker-end: url(#blueArrow); }
+      .red { fill: none; stroke: #f87171; stroke-width: 5; marker-end: url(#redArrow); }
+      .dash { stroke-dasharray: 11 8; }
+    </style>
+  </defs>
+
+  <rect width="1800" height="1240" fill="url(#bg)"/>
+  <circle cx="1690" cy="80" r="240" fill="#0d9488" opacity="0.045"/>
+  <circle cx="70" cy="1180" r="260" fill="#7c3aed" opacity="0.04"/>
+
+  <text x="48" y="52" class="title">Spider Side View — Force &amp; Motion Arrows</text>
+  <text x="49" y="82" class="subtitle">Arrows are attached to the body, planted feet, swing foot, root, and collision boundary</text>
+  <rect x="1288" y="31" width="464" height="53" rx="13" fill="#2b1822" stroke="#fb7185" stroke-width="1.4"/>
+  <text x="1312" y="54" class="card-title" fill="#fecdd3">Important model distinction</text>
+  <text x="1312" y="74" class="small" fill="#fecdd3">Solid arrows: custom dynamics · Dashed arrows: kinematic commands</text>
+
+  <text x="48" y="127" class="section">SIDE-VIEW FREE-BODY DIAGRAM</text>
+  <rect x="46" y="145" width="1172" height="853" rx="20" class="panel" filter="url(#shadow)"/>
+
+  <!-- Terrain and slope -->
+  <path d="M76 900 L1166 735 L1166 962 L76 962 Z" fill="url(#ground)" stroke="#34d399" stroke-width="3"/>
+  <path d="M76 900 L1166 735" stroke="#6ee7b7" stroke-width="5" stroke-linecap="round"/>
+  <path d="M91 897 A92 92 0 0 1 182 884" fill="none" stroke="#94a3b8" stroke-width="2"/>
+  <text x="118" y="874" class="small">surface slope θ</text>
+
+  <!-- Conditional obstacle -->
+  <rect x="1119" y="573" width="47" height="162" rx="4" fill="#3a2027" stroke="#f87171" stroke-width="2.5"/>
+  <path d="M1120 627 L1021 642" class="red"/>
+  <text x="999" y="616" class="label" fill="#fca5a5">C</text>
+
+  <!-- Far-side legs, subdued -->
+  <g opacity="0.32" stroke="#7dd3fc" stroke-width="11" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M488 519 L345 682 L245 874"/>
+    <path d="M606 548 L504 705 L445 844"/>
+    <path d="M748 548 L756 681 L706 805"/>
+    <path d="M844 514 L968 625 L1068 752"/>
+  </g>
+  <g opacity="0.5" fill="#7dd3fc" stroke="#dbeafe" stroke-width="2">
+    <circle cx="245" cy="874" r="12"/>
+    <circle cx="445" cy="844" r="12"/>
+    <circle cx="706" cy="805" r="12"/>
+    <circle cx="1068" cy="752" r="12"/>
+  </g>
+
+  <!-- Spider body -->
+  <ellipse cx="650" cy="492" rx="225" ry="105" fill="#18374d" stroke="#7dd3fc" stroke-width="4"/>
+  <ellipse cx="850" cy="499" rx="107" ry="84" fill="#224a64" stroke="#bae6fd" stroke-width="3"/>
+  <circle cx="890" cy="472" r="7" fill="#f8fafc"/>
+  <circle cx="913" cy="485" r="7" fill="#f8fafc"/>
+  <path d="M936 504 L983 525" stroke="#bae6fd" stroke-width="6" stroke-linecap="round"/>
+  <path d="M936 518 L981 551" stroke="#bae6fd" stroke-width="5" stroke-linecap="round"/>
+  <text x="588" y="500" class="small" fill="#dbeafe">BODY / ROOT</text>
+
+  <!-- Near-side stance legs -->
+  <g stroke="#38bdf8" stroke-width="15" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M479 526 L350 685 L252 873"/>
+    <path d="M591 562 L505 715 L447 844"/>
+    <path d="M718 562 L748 687 L707 804"/>
+  </g>
+  <g fill="#22d3ee" stroke="#cffafe" stroke-width="3">
+    <circle cx="252" cy="873" r="16"/>
+    <circle cx="447" cy="844" r="16"/>
+    <circle cx="707" cy="804" r="16"/>
+  </g>
+
+  <!-- Front swing leg -->
+  <path d="M823 547 L940 620 L1014 697" stroke="#a78bfa" stroke-width="15" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="1014" cy="697" r="16" fill="#a78bfa" stroke="#ede9fe" stroke-width="3"/>
+  <path d="M1014 697 C1042 633, 1100 649, 1090 720" class="violet dash"/>
+  <text x="1058" y="639" class="label" fill="#c4b5fd">P</text>
+
+  <!-- Center of mass and gravity -->
+  <circle cx="650" cy="492" r="8" fill="#fbbf24" stroke="#fff7cc" stroke-width="3"/>
+  <path d="M650 505 L650 721" class="orange"/>
+  <text x="669" y="612" class="label" fill="#fde68a">G</text>
+  <text x="669" y="635" class="small" fill="#fde68a">center of mass</text>
+
+  <!-- Root commanded motion -->
+  <path d="M667 452 L894 418" class="blue dash"/>
+  <text x="776" y="407" class="label" fill="#93c5fd">D</text>
+
+  <!-- Balance moment -->
+  <path d="M544 429 A145 112 0 0 1 738 405" class="pink dash"/>
+  <text x="629" y="371" class="label" fill="#fda4af">B</text>
+
+  <!-- Normal arrows at stance feet -->
+  <path d="M252 857 L278 728" class="green"/>
+  <text x="281" y="748" class="label" fill="#6ee7b7">N₁</text>
+  <path d="M447 828 L473 699" class="green"/>
+  <text x="476" y="719" class="label" fill="#6ee7b7">N₂</text>
+  <path d="M707 788 L733 659" class="green"/>
+  <text x="736" y="679" class="label" fill="#6ee7b7">N₃</text>
+
+  <!-- Forward stance traction at two planted feet -->
+  <path d="M270 870 L390 852" class="cyan"/>
+  <text x="326" y="834" class="label" fill="#67e8f9">T₁</text>
+  <path d="M465 841 L585 823" class="cyan"/>
+  <text x="521" y="805" class="label" fill="#67e8f9">T₂</text>
+
+  <!-- Passive surface resistance, opposite unintended downslope slide -->
+  <path d="M690 807 L817 788" class="pink"/>
+  <text x="748" y="833" class="label" fill="#fda4af">R</text>
+
+  <!-- Surface normal basis indicator -->
+  <path d="M1060 827 L1083 708" class="green dash"/>
+  <text x="1088" y="730" class="small" fill="#6ee7b7">surface normal n</text>
+
+  <!-- Diagram callouts, each isolated -->
+  <rect x="78" y="177" width="294" height="107" rx="13" fill="#241e13" stroke="#fbbf24" stroke-width="1.6"/>
+  <text x="99" y="205" class="card-title">Body force</text>
+  <text x="99" y="232" class="body">Gravity acts at the configured</text>
+  <text x="99" y="254" class="body">center of mass.</text>
+  <text x="99" y="275" class="small">Custom acceleration: 9.81 downward</text>
+
+  <rect x="392" y="177" width="335" height="107" rx="13" fill="#10291f" stroke="#10b981" stroke-width="1.6"/>
+  <text x="413" y="205" class="card-title">Planted-foot support</text>
+  <text x="413" y="232" class="body">Feet are projected out of the terrain.</text>
+  <text x="413" y="254" class="body">This behaves like a normal reaction.</text>
+  <text x="413" y="275" class="small">It is a positional constraint, not an impulse.</text>
+
+  <rect x="747" y="177" width="439" height="107" rx="13" fill="#17223a" stroke="#60a5fa" stroke-width="1.6"/>
+  <text x="768" y="205" class="card-title">Kinematic movement</text>
+  <text x="768" y="232" class="body">Finger alternation commands root travel.</text>
+  <text x="768" y="254" class="body">CCD IK rotates each leg toward a foot target.</text>
+  <text x="768" y="275" class="small">These dashed arrows are motion commands, not forces.</text>
+
+  <!-- Right legend -->
+  <text x="1250" y="127" class="section">ARROW LEGEND</text>
+  <rect x="1248" y="145" width="504" height="853" rx="20" class="panel" filter="url(#shadow)"/>
+
+  <rect x="1272" y="172" width="456" height="91" rx="13" class="legend-card"/>
+  <line x1="1294" y1="206" x2="1362" y2="206" class="orange"/>
+  <text x="1382" y="199" class="card-title">G · Gravity</text>
+  <text x="1382" y="223" class="body">Downward environmental acceleration at the body.</text>
+  <text x="1382" y="246" class="small">The configured 2.5 kg does not enter a Rigidbody solve.</text>
+
+  <rect x="1272" y="279" width="456" height="91" rx="13" class="legend-card"/>
+  <line x1="1294" y1="313" x2="1362" y2="313" class="green"/>
+  <text x="1382" y="306" class="card-title">N · Surface normal support</text>
+  <text x="1382" y="330" class="body">Pushes each planted target out of the ground.</text>
+  <text x="1382" y="353" class="small">Implemented by projection and clearance correction.</text>
+
+  <rect x="1272" y="386" width="456" height="91" rx="13" class="legend-card"/>
+  <line x1="1294" y1="420" x2="1362" y2="420" class="cyan"/>
+  <text x="1382" y="413" class="card-title">T · Planted-foot traction</text>
+  <text x="1382" y="437" class="body">Forward support while stance feet perform a push.</text>
+  <text x="1382" y="460" class="small">Scales commanded speed from 35% to 100%.</text>
+
+  <rect x="1272" y="493" width="456" height="91" rx="13" class="legend-card"/>
+  <line x1="1294" y1="527" x2="1362" y2="527" class="pink"/>
+  <text x="1382" y="520" class="card-title">R · Surface resistance</text>
+  <text x="1382" y="544" class="body">Friction and adhesion oppose unintended sliding.</text>
+  <text x="1382" y="567" class="small">Wall adhesion is at least 11.77 units/s².</text>
+
+  <rect x="1272" y="600" width="456" height="91" rx="13" class="legend-card"/>
+  <line x1="1294" y1="634" x2="1362" y2="634" class="blue dash"/>
+  <text x="1382" y="627" class="card-title">D · Root travel command</text>
+  <text x="1382" y="651" class="body">Moves the root forward along the surface tangent.</text>
+  <text x="1382" y="674" class="small">Forward-only; about 0.69 to 2.6 units/s.</text>
+
+  <rect x="1272" y="707" width="456" height="91" rx="13" class="legend-card"/>
+  <line x1="1294" y1="741" x2="1362" y2="741" class="violet dash"/>
+  <text x="1382" y="734" class="card-title">P · Swing-foot target</text>
+  <text x="1382" y="758" class="body">A smooth forward arc followed by CCD IK.</text>
+  <text x="1382" y="781" class="small">No normal support is shown until the foot plants.</text>
+
+  <rect x="1272" y="814" width="456" height="73" rx="13" class="legend-card"/>
+  <path d="M1294 859 A34 25 0 0 1 1362 844" class="pink dash"/>
+  <text x="1382" y="843" class="card-title">B · Balance posture</text>
+  <text x="1382" y="868" class="body">Cadence imbalance tips the body up to 4.5°.</text>
+
+  <rect x="1272" y="903" width="456" height="70" rx="13" class="legend-card"/>
+  <line x1="1294" y1="937" x2="1362" y2="937" class="red"/>
+  <text x="1382" y="930" class="card-title">C · Conditional obstacle contact</text>
+  <text x="1382" y="954" class="body">Sphere casts truncate motion before a hard obstacle.</text>
+
+  <!-- Bottom equations and stance note -->
+  <text x="48" y="1043" class="section">SURFACE-DYNAMICS SUMMARY</text>
+  <rect x="46" y="1061" width="1706" height="130" rx="18" class="panel"/>
+
+  <rect x="72" y="1085" width="480" height="82" rx="13" fill="#10291f" stroke="#10b981" stroke-width="1.4"/>
+  <text x="94" y="1114" class="formula">a_slope = ProjectOnPlane(9.81 · down, n)</text>
+  <text x="94" y="1142" class="small">Gravity only changes environmental slide along the surface.</text>
+
+  <rect x="575" y="1085" width="562" height="82" rx="13" fill="#10291f" stroke="#10b981" stroke-width="1.4"/>
+  <text x="597" y="1114" class="formula">a_resist = 0.9 · 9.81 · nᵧ + grip · 9.81 · nᵧ</text>
+  <text x="597" y="1142" class="small">Resistance moves environmental velocity toward zero; slide is capped at 0.5 units/s.</text>
+
+  <rect x="1160" y="1085" width="566" height="82" rx="13" fill="#2b1822" stroke="#fb7185" stroke-width="1.4"/>
+  <text x="1182" y="1114" class="card-title">During stance</text>
+  <text x="1182" y="1142" class="body">The target is fixed in world space; root motion creates the apparent leg push.</text>
+
+  <text x="49" y="1220" class="small">Solid arrows describe the custom force-like surface model. Dashed arrows describe direct transform or IK motion.</text>
+  <text x="1470" y="1220" class="small">Unity units assumed ≈ metres</text>
+</svg>
