@@ -44,6 +44,8 @@ namespace Dexter.Spider.EditorTools
         private const string ForwardTurnEndKey = "Dexter.Spider.ForwardTurnEnd";
         private const string ForwardTurnForceKey = "Dexter.Spider.ForwardTurnForce";
         private const string WallAscentTeleportKey = "Dexter.Spider.WallAscentTeleport";
+        private const string ConcaveCornerTeleportKey =
+            "Dexter.Spider.ConcaveCornerTeleport";
         private const string SyntheticReceiverDisabledKey =
             "Dexter.Spider.SyntheticReceiverDisabled";
 
@@ -81,6 +83,7 @@ namespace Dexter.Spider.EditorTools
             SessionState.SetBool(CapturePendingKey, false);
             SessionState.SetBool(ForwardWalkPendingKey, false);
             SessionState.SetBool(WallAscentTeleportKey, false);
+            SessionState.SetBool(ConcaveCornerTeleportKey, false);
             stopAt = -1;
             captureTimerRunning = false;
             forwardWalkRunning = false;
@@ -180,6 +183,16 @@ namespace Dexter.Spider.EditorTools
             Debug.Log("Short synthetic trough-wall ascent capture requested.");
         }
 
+        [MenuItem("Spider/Play Mode/Test Concave Corner Approach 15 Seconds")]
+        public static void TestConcaveCornerApproach()
+        {
+            ConfigureSyntheticTest(15f, 1f, 13.5f, 25f, 0f, 0f, 0f);
+            SessionState.SetBool(WallAscentTeleportKey, false);
+            SessionState.SetBool(ConcaveCornerTeleportKey, true);
+            RequestSyntheticPlay();
+            Debug.Log("Synthetic concave-corner regression capture requested.");
+        }
+
         private static void ConfigureSyntheticTest(
             float duration,
             float walkStart,
@@ -277,6 +290,7 @@ namespace Dexter.Spider.EditorTools
                 SessionState.SetBool(CapturePendingKey, false);
                 SessionState.SetBool(ForwardWalkPendingKey, false);
                 SessionState.SetBool(WallAscentTeleportKey, false);
+                SessionState.SetBool(ConcaveCornerTeleportKey, false);
                 forwardWalkRunning = false;
                 RestorePhysicalReceiverAfterSyntheticTest();
                 if (openCaptureRequested)
@@ -339,6 +353,8 @@ namespace Dexter.Spider.EditorTools
             }
             if (SessionState.GetBool(WallAscentTeleportKey, false))
                 PrepareWallAscentStart();
+            else if (SessionState.GetBool(ConcaveCornerTeleportKey, false))
+                PrepareConcaveCornerStart();
         }
 
         private static void PrepareWallAscentStart()
@@ -375,6 +391,26 @@ namespace Dexter.Spider.EditorTools
                 spider, true);
             type.GetField("currentYawDegrees", flags)?.SetValue(
                 spider, 34.6f);
+        }
+
+        private static void PrepareConcaveCornerStart()
+        {
+            DexterFrontLegIK spider = Object.FindAnyObjectByType<DexterFrontLegIK>();
+            if (spider == null)
+                return;
+
+            Vector3 rootPosition = new Vector3(
+                388.41f, 1.0500002f, 215.57f);
+            spider.transform.position = rootPosition;
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            System.Type type = typeof(DexterFrontLegIK);
+            type.GetMethod("InitializeRig", flags)?.Invoke(spider, null);
+            type.GetField("locomotionWorldPosition", flags)?.SetValue(
+                spider, rootPosition);
+            type.GetField("hasClimbSurfaceAnchor", flags)?.SetValue(
+                spider, false);
+            type.GetField("currentYawDegrees", flags)?.SetValue(
+                spider, -129.4122f);
         }
 
         private static void UpdateSyntheticForwardWalk()
@@ -479,6 +515,7 @@ namespace Dexter.Spider.EditorTools
             else if (command == "TROUGH75") TestFullTroughTraverse();
             else if (command == "ASCEND65") TestTroughWallAscent();
             else if (command == "ASCEND25") TestTroughWallAscentTwentyFiveSeconds();
+            else if (command == "CORNER15") TestConcaveCornerApproach();
             else if (command == "STOP") Stop();
         }
     }

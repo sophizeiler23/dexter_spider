@@ -5,7 +5,6 @@ using System.IO;
 using System.Text;
 using Dexter.Visualize;
 using UnityEngine;
-using UnityEngine.Serialization;
 
 namespace Dexter.Spider
 {
@@ -26,19 +25,15 @@ namespace Dexter.Spider
         [SerializeField] private bool tareOnEnable;
         [SerializeField, Min(0.25f)] private float calibrationDurationSeconds = 10f;
 
-        [Header("iPad Active Movement Calibration")]
-        [Tooltip("When iPad position frames are detected, pause movement and learn a comfortable walking displacement during the first calibration period. Physical Dexter/editor input is unaffected.")]
-        [FormerlySerializedAs("calibrateDexterMovementOnStart")]
-        [SerializeField] private bool calibrateIpadMovementOnStart = true;
-        [Tooltip("Percentile of the recorded walking displacements used as the normal iPad movement. A middle percentile ignores brief peaks while remaining responsive.")]
-        [FormerlySerializedAs("dexterCalibrationReferencePercentile")]
-        [SerializeField, Range(0.25f, 0.8f)] private float ipadCalibrationReferencePercentile = 0.45f;
-        [Tooltip("Safety floor in post-scaled iPad displacement units. The relay multiplies centimeters by 5, so 5 corresponds to 1 cm.")]
-        [FormerlySerializedAs("minimumDexterCalibrationForce")]
-        [SerializeField, Min(0.01f)] private float minimumIpadCalibrationDisplacement = 5f;
-        [Tooltip("iPad displacement needed for maximum walking and turning speed, as a multiple of the learned normal displacement. Lower values are more sensitive.")]
-        [FormerlySerializedAs("dexterMaximumSpeedForceMultiplier")]
-        [SerializeField, Range(1.05f, 6f)] private float ipadMaximumSpeedDisplacementMultiplier = 1.2f;
+        [Header("Dexter Active Movement Calibration")]
+        [Tooltip("When physical Dexter raw samples are detected, pause movement and learn a comfortable walking force from the first calibration period. iPad/editor input is unaffected.")]
+        [SerializeField] private bool calibrateDexterMovementOnStart = true;
+        [Tooltip("Percentile of the recorded walking-strength samples used as the normal Dexter walking force. A middle percentile ignores brief peaks while remaining responsive.")]
+        [SerializeField, Range(0.25f, 0.8f)] private float dexterCalibrationReferencePercentile = 0.45f;
+        [Tooltip("Safety floor for a learned Dexter reference so an accidental no-input calibration cannot amplify sensor noise.")]
+        [SerializeField, Min(0.01f)] private float minimumDexterCalibrationForce = 0.1f;
+        [Tooltip("Physical Dexter force needed for maximum walking and turning speed, as a multiple of the learned normal force. Lower values are more sensitive.")]
+        [SerializeField, Range(1.05f, 6f)] private float dexterMaximumSpeedForceMultiplier = 1.2f;
 
         [Header("Diagnostics")]
         [Tooltip("Writes one CSV row per unique Dexter frame with raw input and solved foot positions.")]
@@ -174,6 +169,18 @@ namespace Dexter.Spider
         [SerializeField, Min(0.05f)] private float bodyCollisionRadius = 0.32f;
         [SerializeField, Min(0f)] private float bodyCollisionHeight = 0.42f;
         [SerializeField, Min(0f)] private float obstacleSkin = 0.05f;
+        [Tooltip("How quickly the root rounds a sharp floor/wall corner instead of snapping to the new support face.")]
+        [SerializeField, Min(0.01f)] private float cornerRootPositionResponse = 2.5f;
+        [Tooltip("Absolute root-speed limit while rounding a terrain corner. This prevents a discontinuous heightmap sample from teleporting the spider.")]
+        [SerializeField, Min(0.01f)] private float cornerRootMaximumSpeed = 3f;
+        [Tooltip("Minimum time the root, torso, and feet share one surface-transition frame.")]
+        [SerializeField, Min(0f)] private float minimumSurfaceTransitionDuration = 0.20f;
+        [Tooltip("Maximum time a surface transition may remain active if terrain samples never fully settle.")]
+        [SerializeField, Min(0.1f)] private float maximumSurfaceTransitionDuration = 1.5f;
+        [Tooltip("Required agreement between the raw terrain normal and smoothed support normal before a transition completes.")]
+        [SerializeField, Range(1f, 20f)] private float surfaceTransitionNormalTolerance = 8f;
+        [Tooltip("How long the surface normals must remain settled before returning to ordinary ground or wall handling.")]
+        [SerializeField, Min(0f)] private float surfaceTransitionStableDuration = 0.15f;
 
         [Header("Safe Foot Workspace")]
         [Tooltip("Maximum movement farther away from the body.")]
@@ -182,6 +189,8 @@ namespace Dexter.Spider
         [SerializeField, Min(0f)] private float maximumInwardMovement = 0.10f;
         [Tooltip("Maximum movement parallel to the side of the body.")]
         [SerializeField, Min(0f)] private float maximumForeAftMovement = 0.65f;
+        [Tooltip("Largest terrain-height difference an individual foot may follow before the root enters a shared surface transition.")]
+        [SerializeField, Min(0.05f)] private float maximumPreTransitionFootHeightDifference = 0.75f;
         [Tooltip("Fraction of the gap between adjacent rows that each foot may use. Values below 0.5 keep rows from overlapping.")]
         [SerializeField, Range(0.1f, 0.49f)] private float rowLaneFraction = 0.40f;
 
@@ -334,24 +343,42 @@ namespace Dexter.Spider
         private readonly RaycastHit[] groundHitBuffer = new RaycastHit[32];
         private float terrainRootClearance;
         private bool hasTerrainRootClearance;
+        private bool rootPositionTransitionActive;
+        private bool wasOnClimbSurface;
+        private bool transitionTargetIsClimb;
+        private bool transitionAwaitingClimbEntry;
+        private float surfaceTransitionStartedAt = -1f;
+        private float surfaceTransitionStableSince = -1f;
+        private bool traceFoundSurfaceFrame;
+        private bool traceEnteredClimb;
+        private bool traceCornerTransition;
+        private bool traceRootTransitionActive;
+        private Vector3 traceMovementStart;
+        private Vector3 traceSurfaceSample;
+        private Vector3 traceMovedSurfaceSample;
+        private Vector3 traceSurfaceForward;
+        private Vector3 traceSurfacePoint;
+        private Vector3 traceRawSurfaceNormal = Vector3.up;
+        private Vector3 traceSupportNormal = Vector3.up;
+        private Vector3 traceClearedRootTarget;
         private StreamWriter traceWriter;
         private long lastTracedSequence = long.MinValue;
         private int unflushedTraceRows;
         private string traceFilePath;
-        private readonly List<float> ipadMovementCalibrationSamples =
+        private readonly List<float> dexterMovementCalibrationSamples =
             new List<float>(1024);
-        private bool waitingForIpadMovementCalibration;
-        private bool isIpadMovementCalibrating;
-        private bool ipadMovementCalibrationComplete;
-        private float ipadMovementCalibrationStart = -1f;
-        private float ipadCalibrationCompleteMessageUntil = -1f;
-        private float calibratedIpadReferenceDisplacement = 5f;
-        private long lastIpadMovementCalibrationSequence = long.MinValue;
+        private bool waitingForDexterMovementCalibration;
+        private bool isDexterMovementCalibrating;
+        private bool dexterMovementCalibrationComplete;
+        private float dexterMovementCalibrationStart = -1f;
+        private float dexterCalibrationCompleteMessageUntil = -1f;
+        private float calibratedDexterReferenceForce = 1f;
+        private long lastDexterMovementCalibrationSequence = long.MinValue;
 
         public bool IsReceiving => receiver != null && receiver.HasRecentFrame;
         public bool IsTaring => isTaring;
-        public bool IsIpadMovementCalibrating =>
-            isIpadMovementCalibrating;
+        public bool IsDexterMovementCalibrating =>
+            isDexterMovementCalibrating;
         public float ForwardSpeed => forwardSpeed;
         public string TraceFilePath => traceFilePath;
 
@@ -365,27 +392,27 @@ namespace Dexter.Spider
             if (!initialized || body == null ||
                 leftLegs == null || rightLegs == null)
                 InitializeRig();
-            PrepareIpadMovementCalibration();
-            if (tareOnEnable && !calibrateIpadMovementOnStart)
+            PrepareDexterMovementCalibration();
+            if (tareOnEnable && !calibrateDexterMovementOnStart)
                 BeginTare();
             else
                 UseUntaredRelayDefaults();
             BeginDiagnosticTrace();
         }
 
-        private void PrepareIpadMovementCalibration()
+        private void PrepareDexterMovementCalibration()
         {
-            waitingForIpadMovementCalibration =
-                calibrateIpadMovementOnStart;
-            isIpadMovementCalibrating = false;
-            ipadMovementCalibrationComplete = false;
-            ipadMovementCalibrationStart = -1f;
-            ipadCalibrationCompleteMessageUntil = -1f;
-            lastIpadMovementCalibrationSequence = long.MinValue;
-            ipadMovementCalibrationSamples.Clear();
-            calibratedIpadReferenceDisplacement = Mathf.Max(
-                minimumIpadCalibrationDisplacement,
-                minimumSpeedDisplacement);
+            waitingForDexterMovementCalibration =
+                calibrateDexterMovementOnStart;
+            isDexterMovementCalibrating = false;
+            dexterMovementCalibrationComplete = false;
+            dexterMovementCalibrationStart = -1f;
+            dexterCalibrationCompleteMessageUntil = -1f;
+            lastDexterMovementCalibrationSequence = long.MinValue;
+            dexterMovementCalibrationSamples.Clear();
+            calibratedDexterReferenceForce = Mathf.Max(
+                minimumDexterCalibrationForce,
+                minimumSpeedDisplacement / 5f);
         }
 
         private void UseUntaredRelayDefaults()
@@ -434,7 +461,7 @@ namespace Dexter.Spider
             RestoreLegPoses(rightLegs);
 
             UpdateTare();
-            UpdateIpadMovementCalibration();
+            UpdateDexterMovementCalibration();
             UpdateDisplacements();
 
             float leftVirtualSupport = Mathf.Clamp01(
@@ -472,7 +499,9 @@ namespace Dexter.Spider
                 totalVirtualSupport,
                 currentCadenceImbalance,
                 rigSpace.right,
-                rigSpace.forward);
+                rigSpace.forward,
+                rootPositionTransitionActive,
+                traceSupportNormal);
 
             SolveLegsWithBalancePosture(
                 leftLegs, true, currentCadenceImbalance, leftFingerMimicLift,
@@ -486,14 +515,13 @@ namespace Dexter.Spider
 
         private void OnGUI()
         {
-            bool waitingForDevice = waitingForIpadMovementCalibration &&
+            bool waitingForDevice = waitingForDexterMovementCalibration &&
                 (receiver == null || !receiver.HasRecentFrame ||
-                 !IsIpadFrame(receiver.LatestFrame) ||
-                 !HasActiveIpadCalibrationFinger());
-            bool showComplete = ipadMovementCalibrationComplete &&
+                 !IsPhysicalDexterFrame(receiver.LatestFrame));
+            bool showComplete = dexterMovementCalibrationComplete &&
                 Time.realtimeSinceStartup <=
-                ipadCalibrationCompleteMessageUntil;
-            if (!waitingForDevice && !isIpadMovementCalibrating &&
+                dexterCalibrationCompleteMessageUntil;
+            if (!waitingForDevice && !isDexterMovementCalibrating &&
                 !showComplete)
                 return;
 
@@ -526,31 +554,31 @@ namespace Dexter.Spider
                 GUI.Label(
                     new Rect(panel.x + 20f, panel.y + 12f,
                         panel.width - 40f, 42f),
-                    "WAITING FOR iPAD",
+                    "WAITING FOR DEXTER",
                     titleStyle);
                 GUI.Label(
                     new Rect(panel.x + 30f, panel.y + 58f,
                         panel.width - 60f, 72f),
-                    "Start the iPad relay and place a finger on either control. The 10-second displacement calibration will begin with the first active touch.",
+                    "No live Dexter force frames are arriving yet. Check the device/relay connection; calibration will begin automatically when data arrives.",
                     messageStyle);
             }
-            else if (isIpadMovementCalibrating)
+            else if (isDexterMovementCalibrating)
             {
                 float elapsed = Mathf.Max(
                     0f,
                     Time.realtimeSinceStartup -
-                    ipadMovementCalibrationStart);
+                    dexterMovementCalibrationStart);
                 float remaining = Mathf.Max(
                     0f, calibrationDurationSeconds - elapsed);
                 GUI.Label(
                     new Rect(panel.x + 20f, panel.y + 12f,
                         panel.width - 40f, 42f),
-                    $"CALIBRATING iPAD  {remaining:0.0}s",
+                    $"CALIBRATING DEXTER  {remaining:0.0}s",
                     titleStyle);
                 GUI.Label(
                     new Rect(panel.x + 30f, panel.y + 58f,
                         panel.width - 60f, 72f),
-                    "Place both fingers on the iPad, then alternate them through the displacement range you want to use for normal walking.",
+                    "Place your index and middle fingers in the device, then alternate them naturally as if you are walking.",
                     messageStyle);
             }
             else
@@ -558,12 +586,12 @@ namespace Dexter.Spider
                 GUI.Label(
                     new Rect(panel.x + 20f, panel.y + 20f,
                         panel.width - 40f, 44f),
-                    "iPAD CALIBRATION COMPLETE",
+                    "DEXTER CALIBRATION COMPLETE",
                     titleStyle);
                 GUI.Label(
                     new Rect(panel.x + 30f, panel.y + 68f,
                         panel.width - 60f, 52f),
-                    $"Normal walking displacement: {calibratedIpadReferenceDisplacement:0.00}",
+                    $"Normal walking force: {calibratedDexterReferenceForce:0.00}",
                     messageStyle);
             }
         }
@@ -622,6 +650,15 @@ namespace Dexter.Spider
             row.Append("turn_input,turn_speed_deg_s,yaw_degrees,");
             row.Append("left_gait_phase,left_target_gait_phase,right_gait_phase,right_target_gait_phase,");
             row.Append("spider_x,spider_y,spider_z,body_x,body_y,body_z,body_pitch,body_roll,body_yaw");
+            row.Append(",surface_found,entered_climb,corner_transition,root_transition_active,climb_anchor_active");
+            row.Append(",movement_start_x,movement_start_y,movement_start_z");
+            row.Append(",surface_sample_x,surface_sample_y,surface_sample_z");
+            row.Append(",moved_surface_sample_x,moved_surface_sample_y,moved_surface_sample_z");
+            row.Append(",surface_forward_x,surface_forward_y,surface_forward_z");
+            row.Append(",surface_point_x,surface_point_y,surface_point_z");
+            row.Append(",raw_surface_normal_x,raw_surface_normal_y,raw_surface_normal_z");
+            row.Append(",support_normal_x,support_normal_y,support_normal_z");
+            row.Append(",cleared_root_target_x,cleared_root_target_y,cleared_root_target_z");
             AppendFootHeader(row, "left", leftLegs != null ? leftLegs.Length : 4);
             AppendFootHeader(row, "right", rightLegs != null ? rightLegs.Length : 4);
             traceWriter.WriteLine(row.ToString());
@@ -635,6 +672,9 @@ namespace Dexter.Spider
                 row.Append($",{side}_foot_{number}_x,{side}_foot_{number}_y,{side}_foot_{number}_z");
                 row.Append($",{side}_target_{number}_x,{side}_target_{number}_y,{side}_target_{number}_z");
                 row.Append($",{side}_ground_{number}_y,{side}_ground_{number}_clearance");
+                row.Append($",{side}_surface_{number}_x,{side}_surface_{number}_y,{side}_surface_{number}_z");
+                row.Append($",{side}_surface_normal_{number}_x,{side}_surface_normal_{number}_y,{side}_surface_normal_{number}_z");
+                row.Append($",{side}_surface_{number}_normal_clearance");
             }
         }
 
@@ -698,6 +738,19 @@ namespace Dexter.Spider
             AppendNumber(row, bodyAngles.x);
             AppendNumber(row, bodyAngles.z);
             AppendNumber(row, bodyAngles.y);
+            AppendBoolean(row, traceFoundSurfaceFrame);
+            AppendBoolean(row, traceEnteredClimb);
+            AppendBoolean(row, traceCornerTransition);
+            AppendBoolean(row, traceRootTransitionActive);
+            AppendBoolean(row, hasClimbSurfaceAnchor);
+            AppendVector3(row, traceMovementStart);
+            AppendVector3(row, traceSurfaceSample);
+            AppendVector3(row, traceMovedSurfaceSample);
+            AppendVector3(row, traceSurfaceForward);
+            AppendVector3(row, traceSurfacePoint);
+            AppendVector3(row, traceRawSurfaceNormal);
+            AppendVector3(row, traceSupportNormal);
+            AppendVector3(row, traceClearedRootTarget);
             AppendFeet(row, leftLegs);
             AppendFeet(row, rightLegs);
 
@@ -727,6 +780,26 @@ namespace Dexter.Spider
                 {
                     AppendNumber(row, double.NaN);
                     AppendNumber(row, double.NaN);
+                }
+
+                if (terrainForces != null &&
+                    terrainForces.TryGetTerrainSurfaceFrame(
+                        legs[i].Effector.position,
+                        out Vector3 surfacePoint,
+                        out Vector3 surfaceNormal))
+                {
+                    AppendVector3(row, surfacePoint);
+                    AppendVector3(row, surfaceNormal);
+                    AppendNumber(
+                        row,
+                        Vector3.Dot(
+                            legs[i].Effector.position - surfacePoint,
+                            surfaceNormal.normalized));
+                }
+                else
+                {
+                    for (int column = 0; column < 7; column++)
+                        AppendNumber(row, double.NaN);
                 }
             }
         }
@@ -825,6 +898,12 @@ namespace Dexter.Spider
             locomotionWorldPosition = transform.position;
             hasLocomotionWorldPosition = true;
             hasClimbSurfaceAnchor = false;
+            rootPositionTransitionActive = false;
+            wasOnClimbSurface = false;
+            transitionTargetIsClimb = false;
+            transitionAwaitingClimbEntry = false;
+            surfaceTransitionStartedAt = -1f;
+            surfaceTransitionStableSince = -1f;
             wasTurnGestureActive = false;
             isRecoveringFromTurn = false;
             turnRecoveryElapsed = 0f;
@@ -1076,38 +1155,37 @@ namespace Dexter.Spider
                 this);
         }
 
-        private void UpdateIpadMovementCalibration()
+        private void UpdateDexterMovementCalibration()
         {
-            if ((!waitingForIpadMovementCalibration &&
-                 !isIpadMovementCalibrating) || receiver == null)
+            if ((!waitingForDexterMovementCalibration &&
+                 !isDexterMovementCalibrating) || receiver == null)
                 return;
 
             DexterForceFrame frame = receiver.LatestFrame;
-            if (!IsIpadFrame(frame) || !receiver.HasRecentFrame ||
-                !HasActiveIpadCalibrationFinger())
+            if (!IsPhysicalDexterFrame(frame) || !receiver.HasRecentFrame)
                 return;
 
-            if (waitingForIpadMovementCalibration)
+            if (waitingForDexterMovementCalibration)
             {
-                waitingForIpadMovementCalibration = false;
-                isIpadMovementCalibrating = true;
-                ipadMovementCalibrationStart =
+                waitingForDexterMovementCalibration = false;
+                isDexterMovementCalibrating = true;
+                dexterMovementCalibrationStart =
                     Time.realtimeSinceStartup;
-                lastIpadMovementCalibrationSequence = long.MinValue;
-                ipadMovementCalibrationSamples.Clear();
+                lastDexterMovementCalibrationSequence = long.MinValue;
+                dexterMovementCalibrationSamples.Clear();
                 ResetInputStateForMovementCalibration();
             }
 
-            if (frame.sequence != lastIpadMovementCalibrationSequence)
+            if (frame.sequence != lastDexterMovementCalibrationSequence)
             {
-                lastIpadMovementCalibrationSequence = frame.sequence;
+                lastDexterMovementCalibrationSequence = frame.sequence;
                 float strongestY = 0f;
-                bool hasDisplacement = false;
+                bool hasForce = false;
                 if (TryReadForce(
                         leftLegFinger, out Vector2 leftCalibrationForce))
                 {
                     strongestY = Mathf.Abs(leftCalibrationForce.y);
-                    hasDisplacement = true;
+                    hasForce = true;
                 }
                 if (TryReadForce(
                         rightLegFinger, out Vector2 rightCalibrationForce))
@@ -1115,53 +1193,53 @@ namespace Dexter.Spider
                     strongestY = Mathf.Max(
                         strongestY,
                         Mathf.Abs(rightCalibrationForce.y));
-                    hasDisplacement = true;
+                    hasForce = true;
                 }
 
-                if (hasDisplacement && !float.IsNaN(strongestY) &&
+                if (hasForce && !float.IsNaN(strongestY) &&
                     !float.IsInfinity(strongestY))
-                    ipadMovementCalibrationSamples.Add(strongestY);
+                    dexterMovementCalibrationSamples.Add(strongestY);
             }
 
             if (Time.realtimeSinceStartup -
-                ipadMovementCalibrationStart <
+                dexterMovementCalibrationStart <
                 calibrationDurationSeconds)
                 return;
 
-            CompleteIpadMovementCalibration();
+            CompleteDexterMovementCalibration();
         }
 
-        private void CompleteIpadMovementCalibration()
+        private void CompleteDexterMovementCalibration()
         {
-            if (ipadMovementCalibrationSamples.Count > 0)
+            if (dexterMovementCalibrationSamples.Count > 0)
             {
-                ipadMovementCalibrationSamples.Sort();
+                dexterMovementCalibrationSamples.Sort();
                 int sampleIndex = Mathf.RoundToInt(
-                    (ipadMovementCalibrationSamples.Count - 1) *
-                    ipadCalibrationReferencePercentile);
-                calibratedIpadReferenceDisplacement = Mathf.Max(
-                    minimumIpadCalibrationDisplacement,
-                    ipadMovementCalibrationSamples[
+                    (dexterMovementCalibrationSamples.Count - 1) *
+                    dexterCalibrationReferencePercentile);
+                calibratedDexterReferenceForce = Mathf.Max(
+                    minimumDexterCalibrationForce,
+                    dexterMovementCalibrationSamples[
                         Mathf.Clamp(sampleIndex, 0,
-                            ipadMovementCalibrationSamples.Count - 1)]);
+                            dexterMovementCalibrationSamples.Count - 1)]);
             }
             else
             {
-                calibratedIpadReferenceDisplacement = Mathf.Max(
-                    minimumIpadCalibrationDisplacement,
-                    minimumSpeedDisplacement);
+                calibratedDexterReferenceForce = Mathf.Max(
+                    minimumDexterCalibrationForce,
+                    minimumSpeedDisplacement / 5f);
             }
 
-            isIpadMovementCalibrating = false;
-            ipadMovementCalibrationComplete = true;
-            ipadCalibrationCompleteMessageUntil =
+            isDexterMovementCalibrating = false;
+            dexterMovementCalibrationComplete = true;
+            dexterCalibrationCompleteMessageUntil =
                 Time.realtimeSinceStartup + 1.5f;
             ResetInputStateForMovementCalibration();
             Debug.Log(
-                $"{nameof(DexterFrontLegIK)} active iPad calibration " +
-                $"complete: normal walking displacement=" +
-                $"{calibratedIpadReferenceDisplacement:F3}, " +
-                $"maximum-speed displacement=" +
+                $"{nameof(DexterFrontLegIK)} active Dexter calibration " +
+                $"complete: normal walking force=" +
+                $"{calibratedDexterReferenceForce:F3}, " +
+                $"maximum-speed force=" +
                 $"{GetActiveMaximumSpeedDisplacement():F3}.",
                 this);
         }
@@ -1199,43 +1277,40 @@ namespace Dexter.Spider
             ResetWorldFootTargets(rightLegs);
         }
 
-        private static bool IsIpadFrame(DexterForceFrame frame)
+        private static bool IsPhysicalDexterFrame(DexterForceFrame frame)
         {
             if (frame?.fingers == null)
                 return false;
 
             string transport = frame.transport ?? string.Empty;
-            return transport.IndexOf(
-                "ipad", StringComparison.OrdinalIgnoreCase) >= 0;
+            if (transport.IndexOf(
+                    "ipad", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                transport.IndexOf(
+                    "editor", StringComparison.OrdinalIgnoreCase) >= 0)
+                return false;
+
+            return HasRawSamples(frame.fingers.index) ||
+                   HasRawSamples(frame.fingers.middle);
         }
 
-        private bool HasActiveIpadCalibrationFinger()
-        {
-            return HasActivePositionMeasurement(
-                       receiver?.GetFinger(leftLegFinger)) ||
-                   HasActivePositionMeasurement(
-                       receiver?.GetFinger(rightLegFinger));
-        }
-
-        private static bool HasActivePositionMeasurement(
+        private static bool HasRawSamples(
             DexterFingerMeasurement measurement)
         {
-            return measurement != null && measurement.has_data &&
-                   measurement.force != null && measurement.force.Length >= 2;
+            return measurement?.raw != null && measurement.raw.Length > 0;
         }
 
-        private bool IsUsingCalibratedIpadInput()
+        private bool IsUsingCalibratedDexterInput()
         {
-            return ipadMovementCalibrationComplete &&
-                   IsIpadFrame(receiver?.LatestFrame);
+            return dexterMovementCalibrationComplete &&
+                   IsPhysicalDexterFrame(receiver?.LatestFrame);
         }
 
         private float GetActiveForceRangeScale()
         {
-            if (!IsUsingCalibratedIpadInput())
+            if (!IsUsingCalibratedDexterInput())
                 return 1f;
 
-            return calibratedIpadReferenceDisplacement /
+            return calibratedDexterReferenceForce /
                    Mathf.Max(0.001f, minimumSpeedDisplacement);
         }
 
@@ -1246,9 +1321,9 @@ namespace Dexter.Spider
 
         private float GetActiveMaximumSpeedDisplacement()
         {
-            return IsUsingCalibratedIpadInput()
-                ? calibratedIpadReferenceDisplacement *
-                  ipadMaximumSpeedDisplacementMultiplier
+            return IsUsingCalibratedDexterInput()
+                ? calibratedDexterReferenceForce *
+                  dexterMaximumSpeedForceMultiplier
                 : maximumSpeedDisplacement;
         }
 
@@ -1265,9 +1340,9 @@ namespace Dexter.Spider
 
         private float GetActiveTurnMaximumSpeedDisplacement()
         {
-            return IsUsingCalibratedIpadInput()
+            return IsUsingCalibratedDexterInput()
                 ? GetActiveTurnMinimumSpeedDisplacement() *
-                  ipadMaximumSpeedDisplacementMultiplier
+                  dexterMaximumSpeedForceMultiplier
                 : turnForceForMaximumSpeed;
         }
 
@@ -1285,7 +1360,7 @@ namespace Dexter.Spider
             Vector2 rightForce = Vector2.zero;
 
             if (receiver.HasRecentFrame && !IsTaring &&
-                !isIpadMovementCalibrating)
+                !isDexterMovementCalibrating)
             {
                 if (TryReadForce(leftLegFinger, out Vector2 measuredLeftForce))
                     leftForce = measuredLeftForce - (hasBaseline ? leftBaseline : Vector2.zero);
@@ -1836,6 +1911,9 @@ namespace Dexter.Spider
                             out Vector3 naturalLanding,
                             out Vector3 surfaceNormal))
                     {
+                        if (rootPositionTransitionActive)
+                            naturalLanding = ConstrainTargetReach(
+                                leg, naturalLanding);
                         leg.SwingEndWorldTarget = naturalLanding;
                         leg.SwingSurfaceNormal = surfaceNormal;
                     }
@@ -1905,6 +1983,9 @@ namespace Dexter.Spider
                     if (penetration > 0f)
                         leg.WorldTarget += stanceNormal * penetration;
                 }
+                if (rootPositionTransitionActive)
+                    leg.WorldTarget = ConstrainTargetReach(
+                        leg, leg.WorldTarget);
 
                 leg.WasSwinging = isSwinging;
             }
@@ -2017,30 +2098,66 @@ namespace Dexter.Spider
 
             Vector3 surfacePoint = movedSurfaceSample;
             Vector3 surfaceNormal = Vector3.up;
+            Vector3 supportNormal = Vector3.up;
+            Vector3 surfaceClearedRoot = movedSurfaceSample;
+            bool isCornerTransition = false;
             bool foundSurfaceFrame = terrainForces != null &&
-                terrainForces.TryGetTerrainSurfaceFrame(
+                terrainForces.TryGetContinuousRootSurfacePose(
                     movedSurfaceSample,
+                    terrainRootClearance,
                     out surfacePoint,
-                    out surfaceNormal);
+                    out surfaceNormal,
+                    out supportNormal,
+                    out surfaceClearedRoot,
+                    out isCornerTransition);
             bool enteredClimb = foundSurfaceFrame &&
-                                terrainForces.IsClimbableSurfaceNormal(
-                                    surfaceNormal);
-            // Clear the wall anchor as soon as the root reaches ordinary
-            // terrain. Retaining it on a merely sloped ground surface keeps
-            // the previous wall normal and leaves the torso partially sunk.
-            bool remainSurfaceAnchored = hasClimbSurfaceAnchor &&
-                                         foundSurfaceFrame &&
-                                         terrainForces.IsClimbableSurfaceNormal(
-                                             surfaceNormal);
+                terrainForces.IsClimbableSurfaceNormal(surfaceNormal);
+            bool anticipatedClimbTransition = foundSurfaceFrame &&
+                !enteredClimb &&
+                terrainForces.ShouldAnticipateClimbTransition(
+                    surfaceSample,
+                    GetRigForward(),
+                    surfaceNormal, supportNormal);
+            if (foundSurfaceFrame && enteredClimb != wasOnClimbSurface)
+                BeginSurfaceTransition(enteredClimb);
+            else if (anticipatedClimbTransition &&
+                     !rootPositionTransitionActive)
+                BeginSurfaceTransition(true, true);
+            else if (foundSurfaceFrame && isCornerTransition &&
+                     !rootPositionTransitionActive)
+                BeginSurfaceTransition(enteredClimb);
+            wasOnClimbSurface = enteredClimb;
 
-            if (enteredClimb || remainSurfaceAnchored)
+            bool useSurfaceMotionAnchor = enteredClimb ||
+                                          isCornerTransition ||
+                                          rootPositionTransitionActive;
+            if (foundSurfaceFrame && useSurfaceMotionAnchor)
             {
+                // Keep sampling from the actual surface point throughout the
+                // corner. Sampling from the clearance-offset root would add
+                // that offset again on the next frame and create lateral drift.
                 hasClimbSurfaceAnchor = true;
                 climbSurfaceAnchor = surfacePoint;
-                Vector3 desiredRoot = surfacePoint +
-                                      surfaceNormal * terrainRootClearance;
+                Vector3 clearedMovementTarget = surfaceClearedRoot;
+                if (rootPositionTransitionActive)
+                {
+                    // A heightmap can change from floor to wall (or back) in
+                    // one sample. The clearance solver must move the root out
+                    // of both faces, but applying that entire correction in a
+                    // single frame looks like a teleport. Follow the safe pose
+                    // with a frame-rate-independent response so the torso
+                    // rounds the edge while the gait continues advancing.
+                    float cornerBlend = 1f - Mathf.Exp(
+                        -cornerRootPositionResponse * Time.deltaTime);
+                    Vector3 responsiveTarget = Vector3.Lerp(
+                        movementStart, surfaceClearedRoot, cornerBlend);
+                    clearedMovementTarget = Vector3.MoveTowards(
+                        movementStart,
+                        responsiveTarget,
+                        cornerRootMaximumSpeed * Time.deltaTime);
+                }
                 locomotionWorldPosition = ResolveObstacleMovement(
-                    movementStart, desiredRoot);
+                    movementStart, clearedMovementTarget);
             }
             else
             {
@@ -2057,20 +2174,47 @@ namespace Dexter.Spider
                     GetRigForward(),
                     rigSpace.right,
                     terrainRootClearance,
-                    out float requiredBodyHeight))
+                out float requiredBodyHeight))
             {
                 Vector3 worldPosition = transform.position;
-                worldPosition.y = requiredBodyHeight;
+                // Raising remains immediate so the body cannot enter rising
+                // terrain. A downward height discontinuity is safe to follow
+                // gradually and avoids a visible drop at a floor/wall lip.
+                worldPosition.y = requiredBodyHeight >= worldPosition.y
+                    ? requiredBodyHeight
+                    : Mathf.MoveTowards(
+                        worldPosition.y,
+                        requiredBodyHeight,
+                        cornerRootMaximumSpeed * Time.deltaTime);
                 transform.position = worldPosition;
                 locomotionWorldPosition = worldPosition;
             }
+
+            UpdateSurfaceTransition(
+                foundSurfaceFrame,
+                enteredClimb,
+                surfaceNormal,
+                supportNormal);
+
+            traceFoundSurfaceFrame = foundSurfaceFrame;
+            traceEnteredClimb = enteredClimb;
+            traceCornerTransition = isCornerTransition;
+            traceRootTransitionActive = rootPositionTransitionActive;
+            traceMovementStart = movementStart;
+            traceSurfaceSample = surfaceSample;
+            traceMovedSurfaceSample = movedSurfaceSample;
+            traceSurfaceForward = surfaceForward;
+            traceSurfacePoint = surfacePoint;
+            traceRawSurfaceNormal = surfaceNormal;
+            traceSupportNormal = supportNormal;
+            traceClearedRootTarget = surfaceClearedRoot;
 
             if (terrainForces != null)
             {
                 Vector3 facingDirection = surfaceForward;
                 Vector3 actualSurfaceTravel = Vector3.ProjectOnPlane(
                     transform.position - movementStart,
-                    foundSurfaceFrame ? surfaceNormal : Vector3.up);
+                    foundSurfaceFrame ? supportNormal : Vector3.up);
                 if (Mathf.Abs(forwardDelta) > 0.00001f &&
                     actualSurfaceTravel.sqrMagnitude > 0.00000025f)
                 {
@@ -2087,6 +2231,82 @@ namespace Dexter.Spider
                     facingDirection);
             }
 
+        }
+
+        private void BeginSurfaceTransition(
+            bool targetIsClimb,
+            bool awaitingClimbEntry = false)
+        {
+            rootPositionTransitionActive = true;
+            transitionTargetIsClimb = targetIsClimb;
+            transitionAwaitingClimbEntry = awaitingClimbEntry;
+            surfaceTransitionStartedAt = Time.time;
+            surfaceTransitionStableSince = -1f;
+        }
+
+        private void UpdateSurfaceTransition(
+            bool foundSurfaceFrame,
+            bool enteredClimb,
+            Vector3 rawSurfaceNormal,
+            Vector3 supportNormal)
+        {
+            if (!rootPositionTransitionActive)
+                return;
+
+            float elapsed = Mathf.Max(0f, Time.time - surfaceTransitionStartedAt);
+            float maximumDuration = Mathf.Max(
+                minimumSurfaceTransitionDuration,
+                maximumSurfaceTransitionDuration);
+            if (transitionAwaitingClimbEntry)
+            {
+                if (enteredClimb)
+                {
+                    transitionAwaitingClimbEntry = false;
+                    surfaceTransitionStableSince = -1f;
+                }
+                else
+                {
+                    if (elapsed >= maximumDuration)
+                    {
+                        rootPositionTransitionActive = false;
+                        transitionAwaitingClimbEntry = false;
+                        surfaceTransitionStartedAt = -1f;
+                    }
+                    return;
+                }
+            }
+
+            if (foundSurfaceFrame && enteredClimb != transitionTargetIsClimb)
+            {
+                BeginSurfaceTransition(enteredClimb);
+                return;
+            }
+
+            bool normalsSettled = foundSurfaceFrame &&
+                enteredClimb == transitionTargetIsClimb &&
+                Vector3.Angle(rawSurfaceNormal, supportNormal) <=
+                surfaceTransitionNormalTolerance;
+            if (normalsSettled)
+            {
+                if (surfaceTransitionStableSince < 0f)
+                    surfaceTransitionStableSince = Time.time;
+            }
+            else
+            {
+                surfaceTransitionStableSince = -1f;
+            }
+
+            bool stableLongEnough = surfaceTransitionStableSince >= 0f &&
+                Time.time - surfaceTransitionStableSince >=
+                surfaceTransitionStableDuration;
+            if ((elapsed >= minimumSurfaceTransitionDuration &&
+                 stableLongEnough) || elapsed >= maximumDuration)
+            {
+                rootPositionTransitionActive = false;
+                transitionAwaitingClimbEntry = false;
+                surfaceTransitionStartedAt = -1f;
+                surfaceTransitionStableSince = -1f;
+            }
         }
 
         private Vector3 GetTerrainSamplingPosition()
@@ -2117,7 +2337,8 @@ namespace Dexter.Spider
             {
                 Collider hitCollider = hits[i].collider;
                 if (hitCollider == null ||
-                    IsWalkableTerrainContact(hits[i]) ||
+                    IsWalkableTerrainContact(
+                        hits[i], horizontalDelta / distance) ||
                     IsSoftFoliageCollider(hitCollider) ||
                     hitCollider.transform.IsChildOf(transform))
                     continue;
@@ -2135,7 +2356,10 @@ namespace Dexter.Spider
             return resolved;
         }
 
-        private bool IsWalkableTerrainContact(RaycastHit hit)
+        private bool IsWalkableTerrainContact(
+            RaycastHit hit,
+            Vector3 approachDirection,
+            bool allowSteepTerrain = true)
         {
             // Terrain-painted tree trunks may be reported through the same
             // TerrainCollider as the ground. A steep contact is ignored only
@@ -2143,9 +2367,9 @@ namespace Dexter.Spider
             // vertical tree/trunk contacts therefore remain blocking.
             return hit.collider is TerrainCollider &&
                    (hit.normal.y >= 0.55f ||
-                    (terrainForces != null &&
+                    (allowSteepTerrain && terrainForces != null &&
                      terrainForces.IsClimbableTerrainContact(
-                         hit.point, hit.normal)));
+                         hit.point, hit.normal, approachDirection)));
         }
 
         private static bool IsSoftFoliageCollider(Collider collider)
@@ -2195,10 +2419,14 @@ namespace Dexter.Spider
             if (TryGetActiveClimbNormal(out Vector3 activeClimbNormal) &&
                 terrainForces.TryProjectFootToClimbSurface(
                     desired, activeClimbNormal, clearance,
-                    out surfaceTarget, out surfaceNormal))
+                    out surfaceTarget, out surfaceNormal,
+                    rootPositionTransitionActive))
                 return true;
 
-            if (terrainForces != null &&
+            bool allowLocalClimbContact = rootPositionTransitionActive ||
+                                          hasClimbSurfaceAnchor ||
+                                          wasOnClimbSurface;
+            if (allowLocalClimbContact && terrainForces != null &&
                 terrainForces.TryGetClimbSurfaceContact(
                     desired, clearance, out surfaceTarget, out surfaceNormal))
                 return true;
@@ -2207,12 +2435,25 @@ namespace Dexter.Spider
             surfaceNormal = Vector3.up;
             if (!TrySampleTerrainHeight(desired, out float terrainHeight))
                 return false;
+            if (!allowLocalClimbContact && traceFoundSurfaceFrame &&
+                Mathf.Abs(terrainHeight - traceSurfacePoint.y) >
+                maximumPreTransitionFootHeightDifference)
+            {
+                terrainHeight = traceSurfacePoint.y;
+            }
             surfaceTarget.y = terrainHeight + clearance;
             return true;
         }
 
         private bool TryGetActiveClimbNormal(out Vector3 surfaceNormal)
         {
+            if (rootPositionTransitionActive && traceFoundSurfaceFrame &&
+                traceSupportNormal.sqrMagnitude > 0.0001f)
+            {
+                surfaceNormal = traceSupportNormal.normalized;
+                return true;
+            }
+
             surfaceNormal = Vector3.up;
             return hasClimbSurfaceAnchor &&
                    terrainForces != null &&
@@ -2430,10 +2671,13 @@ namespace Dexter.Spider
         private Vector3 ConstrainTargetReach(LegChain leg, Vector3 target)
         {
             Vector3 hip = leg.Joints[0].position;
-            float restingReach = Vector3.Distance(hip, leg.RestWorldTarget);
+            Vector3 naturalRestTarget = rigSpace != null
+                ? rigSpace.TransformPoint(leg.RestRigLocalTarget)
+                : leg.RestWorldTarget;
+            float restingReach = Vector3.Distance(hip, naturalRestTarget);
             Vector3 hipToTarget = target - hip;
             if (restingReach < 0.0001f || hipToTarget.sqrMagnitude < 0.0000001f)
-                return leg.RestWorldTarget;
+                return naturalRestTarget;
 
             float minimumReach = restingReach * minimumRestReachRatio;
             float maximumReach = restingReach * maximumRestReachRatio;
@@ -2521,6 +2765,12 @@ namespace Dexter.Spider
             locomotionWorldPosition = transform.position;
             hasLocomotionWorldPosition = true;
             hasClimbSurfaceAnchor = false;
+            rootPositionTransitionActive = false;
+            wasOnClimbSurface = false;
+            transitionTargetIsClimb = false;
+            transitionAwaitingClimbEntry = false;
+            surfaceTransitionStartedAt = -1f;
+            surfaceTransitionStableSince = -1f;
             lastAppliedForwardDistance = currentForwardDistance;
             if (TrySampleTerrainHeight(transform.position, out float terrainHeight))
             {
@@ -2585,7 +2835,10 @@ namespace Dexter.Spider
                 {
                     supportNormal = activeClimbNormal;
                 }
-                else if (terrainForces != null &&
+                else if ((rootPositionTransitionActive ||
+                          hasClimbSurfaceAnchor ||
+                          wasOnClimbSurface) &&
+                    terrainForces != null &&
                     terrainForces.TryGetClimbSurfaceContact(
                         leg.WorldTarget, leg.GroundClearance,
                         out _, out Vector3 climbNormal))
@@ -2645,6 +2898,8 @@ namespace Dexter.Spider
                     else if (penetration > 0f)
                         solvedTarget += surfaceNormal * penetration;
                 }
+                if (rootPositionTransitionActive)
+                    solvedTarget = ConstrainTargetReach(leg, solvedTarget);
                 SolveCcd(leg, solvedTarget);
                 if (TryGetFootSurfaceTarget(
                         leg.Effector.position, leg.GroundClearance,
@@ -2658,8 +2913,12 @@ namespace Dexter.Spider
                         // joint-angle limit. Re-solve from the measured foot
                         // position rather than translating the chain, which
                         // preserves leg lengths and prevents warping.
-                        SolveCcd(leg,
-                            solvedTarget + solvedNormal * penetration);
+                        Vector3 correctedTarget =
+                            solvedTarget + solvedNormal * penetration;
+                        if (rootPositionTransitionActive)
+                            correctedTarget = ConstrainTargetReach(
+                                leg, correctedTarget);
+                        SolveCcd(leg, correctedTarget);
                     }
                 }
             }
@@ -2688,7 +2947,15 @@ namespace Dexter.Spider
                 Collider collider = hits[i].collider;
                 if (collider == null || collider.transform.IsChildOf(transform) ||
                     IsSoftFoliageCollider(collider) ||
-                    IsWalkableTerrainContact(hits[i]))
+                    IsWalkableTerrainContact(
+                        hits[i],
+                        delta / distance,
+                        hasClimbSurfaceAnchor ||
+                        wasOnClimbSurface ||
+                        (rootPositionTransitionActive &&
+                         terrainForces != null &&
+                         terrainForces.IsClimbableSurfaceNormal(
+                             traceSupportNormal))))
                     continue;
                 if (hits[i].distance < permitted)
                 {
@@ -2849,12 +3116,12 @@ namespace Dexter.Spider
             rightLegFinger = DexterFinger.Middle;
             ApplyResponsiveMovementDefaults();
             calibrationDurationSeconds = Mathf.Max(0.25f, calibrationDurationSeconds);
-            ipadCalibrationReferencePercentile = Mathf.Clamp(
-                ipadCalibrationReferencePercentile, 0.25f, 0.8f);
-            minimumIpadCalibrationDisplacement = Mathf.Max(
-                0.01f, minimumIpadCalibrationDisplacement);
-            ipadMaximumSpeedDisplacementMultiplier = Mathf.Clamp(
-                ipadMaximumSpeedDisplacementMultiplier, 1.05f, 6f);
+            dexterCalibrationReferencePercentile = Mathf.Clamp(
+                dexterCalibrationReferencePercentile, 0.25f, 0.8f);
+            minimumDexterCalibrationForce = Mathf.Max(
+                0.01f, minimumDexterCalibrationForce);
+            dexterMaximumSpeedForceMultiplier = Mathf.Clamp(
+                dexterMaximumSpeedForceMultiplier, 1.05f, 6f);
             displacementPerNewton.x = Mathf.Max(0f, displacementPerNewton.x);
             displacementPerNewton.y = Mathf.Max(0f, displacementPerNewton.y);
             forceDeadZone = Mathf.Max(0f, forceDeadZone);
@@ -2864,6 +3131,8 @@ namespace Dexter.Spider
             maximumOutwardMovement = Mathf.Max(0f, maximumOutwardMovement);
             maximumInwardMovement = Mathf.Max(0f, maximumInwardMovement);
             maximumForeAftMovement = Mathf.Max(0f, maximumForeAftMovement);
+            maximumPreTransitionFootHeightDifference = Mathf.Max(
+                0.05f, maximumPreTransitionFootHeightDifference);
             rowLaneFraction = Mathf.Clamp(rowLaneFraction, 0.1f, 0.49f);
             minimumRestReachRatio = Mathf.Clamp(minimumRestReachRatio, 0.5f, 1f);
             maximumRestReachRatio = Mathf.Clamp(maximumRestReachRatio, 1f, 1.25f);
@@ -2950,6 +3219,18 @@ namespace Dexter.Spider
             bodyCollisionRadius = Mathf.Max(0.05f, bodyCollisionRadius);
             bodyCollisionHeight = Mathf.Max(0f, bodyCollisionHeight);
             obstacleSkin = Mathf.Max(0f, obstacleSkin);
+            cornerRootPositionResponse = Mathf.Max(
+                0.01f, cornerRootPositionResponse);
+            cornerRootMaximumSpeed = Mathf.Max(0.01f, cornerRootMaximumSpeed);
+            minimumSurfaceTransitionDuration = Mathf.Max(
+                0f, minimumSurfaceTransitionDuration);
+            maximumSurfaceTransitionDuration = Mathf.Max(
+                Mathf.Max(0.1f, minimumSurfaceTransitionDuration),
+                maximumSurfaceTransitionDuration);
+            surfaceTransitionNormalTolerance = Mathf.Clamp(
+                surfaceTransitionNormalTolerance, 1f, 20f);
+            surfaceTransitionStableDuration = Mathf.Max(
+                0f, surfaceTransitionStableDuration);
             baseJointLeadDegrees = Mathf.Clamp(baseJointLeadDegrees, 0f, 30f);
             maximumBaseDeviationDegrees = Mathf.Clamp(maximumBaseDeviationDegrees, 1f, 120f);
             maximumJointDeviationDegrees = Mathf.Clamp(maximumJointDeviationDegrees, 1f, 120f);

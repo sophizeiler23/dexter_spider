@@ -87,6 +87,11 @@ namespace Dexter.Spider
         private float currentCenterPitch;
         private Quaternion currentTerrainTilt = Quaternion.identity;
         private float currentGripStability;
+        private Vector3 previousRootSurfaceNormal = Vector3.up;
+        private Vector3 cornerFromNormal = Vector3.up;
+        private Vector3 cornerToNormal = Vector3.up;
+        private bool hasPreviousRootSurfaceNormal;
+        private bool rootCornerTransitionActive;
 
         public Vector3 ApplyForces(Vector3 worldPosition)
         {
@@ -158,8 +163,13 @@ namespace Dexter.Spider
                 intendedForward, Vector3.up).normalized;
             if (planarForward.sqrMagnitude < 0.0001f)
                 return intendedForward.normalized;
-            if (!TryGetTravelSurfaceNormal(
-                    worldPosition, planarForward, out Vector3 normal))
+            // Translation must follow the surface currently under the root.
+            // Using the uphill look-ahead normal here turns the travel vector
+            // almost vertical before the root reaches a sharp wall, removing
+            // the horizontal progress needed to enter that wall sample. Pose
+            // and foot preparation may still anticipate the upcoming surface.
+            if (!TrySampleTerrainNormal(
+                    worldPosition, out Vector3 normal))
                 return planarForward;
 
             // Building forward from a stable lateral axis remains well-defined
@@ -191,15 +201,43 @@ namespace Dexter.Spider
 
         public bool IsClimbableTerrainContact(
             Vector3 worldPoint,
-            Vector3 colliderNormal)
+            Vector3 colliderNormal,
+            Vector3 approachDirection)
         {
             EnsureTerrain();
-            if (!enableSteepSurfaceClimbing ||
-                !TrySampleTerrainNormal(worldPoint, out Vector3 terrainNormal) ||
-                !IsClimbableNormal(terrainNormal))
+            if (!enableSteepSurfaceClimbing)
                 return false;
-            return Vector3.Dot(
-                terrainNormal, colliderNormal.normalized) >= climbNormalMatch;
+
+            Vector3 normalizedColliderNormal = colliderNormal.normalized;
+            if (IsMatchingClimbableTerrainNormal(
+                    worldPoint, normalizedColliderNormal))
+                return true;
+
+            // At a hard ground/wall corner, the collision face can be reached
+            // one frame before TerrainData at the body center reports a steep
+            // normal. Probe just beyond the contact in the approach direction
+            // so that collision does not prevent the root from ever entering
+            // the climbable sample. Ordinary terrain-painted tree contacts
+            // remain blocking because nearby TerrainData stays ground-like.
+            Vector3 planarApproach = Vector3.ProjectOnPlane(
+                approachDirection, Vector3.up).normalized;
+            if (planarApproach.sqrMagnitude < 0.0001f)
+                return false;
+
+            return IsMatchingClimbableTerrainNormal(
+                worldPoint + planarApproach * climbSurfaceProbeDistance,
+                normalizedColliderNormal);
+        }
+
+        private bool IsMatchingClimbableTerrainNormal(
+            Vector3 worldPoint,
+            Vector3 colliderNormal)
+        {
+            return TrySampleTerrainNormal(
+                       worldPoint, out Vector3 terrainNormal) &&
+                   IsClimbableNormal(terrainNormal) &&
+                   Vector3.Dot(
+                       terrainNormal, colliderNormal) >= climbNormalMatch;
         }
 
         /// <summary>
@@ -244,18 +282,104 @@ namespace Dexter.Spider
             return true;
         }
 
+        /// <summary>
+        /// Builds one continuous support pose for the root across a sharp
+        /// ground/wall normal discontinuity. Clearance is enforced against the
+        /// current face and both faces of an active corner, so procedural root
+        /// motion cannot cut through either surface while its up axis blends.
+        /// </summary>
+        public bool TryGetContinuousRootSurfacePose(
+            Vector3 worldPosition,
+            float surfaceClearance,
+            out Vector3 surfacePoint,
+            out Vector3 rawSurfaceNormal,
+            out Vector3 supportNormal,
+            out Vector3 rootPosition,
+            out bool isCornerTransition)
+        {
+            rootPosition = worldPosition;
+            supportNormal = Vector3.up;
+            isCornerTransition = false;
+            if (!TryGetTerrainSurfaceFrame(
+                    worldPosition,
+                    out surfacePoint,
+                    out rawSurfaceNormal))
+                return false;
+
+            supportNormal = (currentTerrainTilt * Vector3.up).normalized;
+            if (supportNormal.sqrMagnitude < 0.0001f)
+                supportNormal = rawSurfaceNormal;
+
+            if (!hasPreviousRootSurfaceNormal)
+            {
+                previousRootSurfaceNormal = rawSurfaceNormal;
+                hasPreviousRootSurfaceNormal = true;
+            }
+
+            if (!rootCornerTransitionActive && Vector3.Angle(
+                    previousRootSurfaceNormal,
+                    rawSurfaceNormal) >= 20f)
+            {
+                rootCornerTransitionActive = true;
+                cornerFromNormal = previousRootSurfaceNormal;
+                cornerToNormal = rawSurfaceNormal;
+            }
+
+            isCornerTransition = rootCornerTransitionActive;
+
+            float clearance = Mathf.Max(0f, surfaceClearance);
+            Vector3 clearanceOffset = supportNormal * clearance;
+            EnforceNormalClearance(
+                ref clearanceOffset, rawSurfaceNormal, clearance);
+            if (rootCornerTransitionActive)
+            {
+                EnforceNormalClearance(
+                    ref clearanceOffset, cornerFromNormal, clearance);
+                EnforceNormalClearance(
+                    ref clearanceOffset, cornerToNormal, clearance);
+
+                bool reachedNewFace = Vector3.Angle(
+                    supportNormal, cornerToNormal) <= 8f;
+                bool currentFaceIsStable = Vector3.Angle(
+                    rawSurfaceNormal, cornerToNormal) <= 12f;
+                if (reachedNewFace && currentFaceIsStable)
+                    rootCornerTransitionActive = false;
+            }
+
+            previousRootSurfaceNormal = rawSurfaceNormal;
+            rootPosition = surfacePoint + clearanceOffset;
+            return true;
+        }
+
+        private static void EnforceNormalClearance(
+            ref Vector3 offset,
+            Vector3 surfaceNormal,
+            float requiredClearance)
+        {
+            Vector3 normal = surfaceNormal.normalized;
+            if (normal.sqrMagnitude < 0.0001f)
+                return;
+
+            float missingClearance = requiredClearance -
+                                     Vector3.Dot(offset, normal);
+            if (missingClearance > 0f)
+                offset += normal * missingClearance;
+        }
+
         public bool TryProjectFootToClimbSurface(
             Vector3 desiredFootPosition,
             Vector3 preferredSurfaceNormal,
             float surfaceClearance,
             out Vector3 contact,
-            out Vector3 surfaceNormal)
+            out Vector3 surfaceNormal,
+            bool allowTransitionSurface = false)
         {
             EnsureTerrain();
             contact = desiredFootPosition;
             surfaceNormal = preferredSurfaceNormal.normalized;
             if (activeTerrainCollider == null ||
-                !IsClimbableNormal(surfaceNormal))
+                (!allowTransitionSurface &&
+                 !IsClimbableNormal(surfaceNormal)))
                 return false;
 
             float probeDistance = Mathf.Max(
@@ -278,6 +402,47 @@ namespace Dexter.Spider
         public bool IsClimbableSurfaceNormal(Vector3 surfaceNormal)
         {
             return IsClimbableNormal(surfaceNormal);
+        }
+
+        public bool ShouldAnticipateClimbTransition(
+            Vector3 worldPosition,
+            Vector3 intendedForward,
+            Vector3 rawSurfaceNormal,
+            Vector3 supportNormal)
+        {
+            if (!enableSteepSurfaceClimbing)
+                return false;
+
+            float rawSlope = Vector3.Angle(
+                rawSurfaceNormal, Vector3.up);
+            float supportSlope = Vector3.Angle(
+                supportNormal, Vector3.up);
+            bool supportAlreadyTurning =
+                   rawSlope >= Mathf.Max(0f, climbStartAngle - 15f) &&
+                   rawSlope < climbStartAngle &&
+                   supportSlope >= climbStartAngle &&
+                   Vector3.Angle(rawSurfaceNormal, supportNormal) >= 8f;
+            if (supportAlreadyTurning)
+                return true;
+
+            Vector3 planarForward = Vector3.ProjectOnPlane(
+                intendedForward, Vector3.up).normalized;
+            if (planarForward.sqrMagnitude < 0.0001f)
+                return false;
+
+            Vector3 probePosition = worldPosition + planarForward *
+                (climbSurfaceProbeDistance * 3f);
+            if (!TrySampleTerrainNormal(
+                    probePosition, out Vector3 probeNormal) ||
+                !IsClimbableNormal(probeNormal))
+                return false;
+
+            bool hasCurrentHeight = TrySampleTerrainHeight(
+                worldPosition, out float currentHeight);
+            bool hasProbeHeight = TrySampleTerrainHeight(
+                probePosition, out float probeHeight);
+            return !hasCurrentHeight || !hasProbeHeight ||
+                   probeHeight > currentHeight + 0.01f;
         }
 
         public float GetWalkingTractionMultiplier(float plantedPush)
@@ -465,6 +630,12 @@ namespace Dexter.Spider
         public void ResetForces()
         {
             environmentalVelocity = Vector3.zero;
+            currentTerrainTilt = Quaternion.identity;
+            previousRootSurfaceNormal = Vector3.up;
+            cornerFromNormal = Vector3.up;
+            cornerToNormal = Vector3.up;
+            hasPreviousRootSurfaceNormal = false;
+            rootCornerTransitionActive = false;
         }
 
         public void StopOnCollision()
@@ -484,7 +655,9 @@ namespace Dexter.Spider
             float totalVirtualSupport,
             float normalizedCadenceImbalance,
             Vector3 rigRightWorld,
-            Vector3 rigForwardWorld)
+            Vector3 rigForwardWorld,
+            bool surfaceTransitionActive,
+            Vector3 transitionSupportNormal)
         {
             if (body == null)
                 return;
@@ -505,11 +678,26 @@ namespace Dexter.Spider
                 targetDrop,
                 bodyHeightResponse * restingBodyDrop * massResponse * Time.deltaTime);
 
-            Vector3 supportUp = (currentTerrainTilt * Vector3.up).normalized;
-            bool isOnSteepClimb = Vector3.Angle(
-                supportUp, Vector3.up) >= climbStartAngle;
-            if (!isOnSteepClimb)
-                supportUp = Vector3.up;
+            Vector3 sampledSupportUp = surfaceTransitionActive &&
+                                       transitionSupportNormal.sqrMagnitude > 0.0001f
+                ? transitionSupportNormal.normalized
+                : (currentTerrainTilt * Vector3.up).normalized;
+            float supportSlope = Vector3.Angle(
+                sampledSupportUp, Vector3.up);
+            float climbPostureWeight = Mathf.SmoothStep(
+                0f,
+                1f,
+                Mathf.InverseLerp(
+                    climbStartAngle - 15f,
+                    climbStartAngle + 15f,
+                    supportSlope));
+            // Ground posture uses world up while wall posture uses the surface
+            // normal. Blending both direction and body drop prevents the torso
+            // from switching modes at one arbitrary slope threshold.
+            Vector3 supportUp = Vector3.Slerp(
+                Vector3.up,
+                sampledSupportUp,
+                climbPostureWeight).normalized;
             Vector3 safeRight = Vector3.ProjectOnPlane(
                 rigRightWorld, supportUp).normalized;
             float lateralCenterBias = maximumBalanceShift > 0.0001f
@@ -525,13 +713,12 @@ namespace Dexter.Spider
                  lateralCenterBias) * centerHeightLeverage,
                 -1f,
                 1f);
-            // The low resting posture is a vertical-ground pose. Applying its
-            // drop along a near-vertical wall normal pulls the visible torso
-            // into the wall. A climbing torso therefore keeps only its outward
-            // clearance until the root has transitioned back to normal ground.
-            float supportOffset = isOnSteepClimb
-                ? torsoSurfaceClearance
-                : torsoSurfaceClearance - currentBodyDrop;
+            // Fade out the low ground posture as support rotates onto a wall.
+            // This keeps the torso outside both surfaces throughout the shared
+            // root/leg transition instead of dropping it at exactly 45 degrees.
+            float supportOffset = torsoSurfaceClearance -
+                                  currentBodyDrop *
+                                  (1f - climbPostureWeight);
             Vector3 worldOffset = supportUp * supportOffset -
                                   safeRight * weightedImbalance * maximumBalanceShift;
             float targetTip = weightedImbalance *
