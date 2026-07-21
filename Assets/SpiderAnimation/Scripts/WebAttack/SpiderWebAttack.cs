@@ -16,8 +16,8 @@ namespace Dexter.Spider
         [Header("Shot")]
         [SerializeField, Min(0f)] private float launchHeight = 0.35f;
         [SerializeField, Min(0f)] private float launchForwardOffset = 0.45f;
+        [SerializeField, Range(0f, 0.35f)] private float launchArcLift = 0.12f;
         [SerializeField, Min(0f)] private float cooldownSeconds = 0.8f;
-        [SerializeField] private bool aimAtNearestPrey = true;
 
         private float cooldownTimer;
         private Transform resolvedLaunchAnchor;
@@ -62,19 +62,15 @@ namespace Dexter.Spider
             ResolveReferences();
 
             Transform anchor = resolvedLaunchAnchor != null ? resolvedLaunchAnchor : transform;
-            Vector3 direction = ResolveAimDirection(anchor);
+            Vector3 direction = ResolveAimDirection();
 
             Vector3 origin = anchor.position
                 + Vector3.up * launchHeight
                 + direction * launchForwardOffset;
 
-            CirclePrey targetPrey = aimAtNearestPrey
-                ? FindNearestUncapturedPrey(anchor.position)
-                : null;
-
             GameObject shotObject = new("SpiderWebShot");
             SpiderWebShot shot = shotObject.AddComponent<SpiderWebShot>();
-            shot.Launch(origin, direction, targetPrey);
+            shot.Launch(origin, direction);
         }
 
         private void ResolveReferences()
@@ -90,52 +86,18 @@ namespace Dexter.Spider
                 resolvedAimReference = FindBone(bodyBoneName) ?? transform;
         }
 
-        private Vector3 ResolveAimDirection(Transform anchor)
+        private Vector3 ResolveAimDirection()
         {
-            if (aimAtNearestPrey)
-            {
-                CirclePrey nearestPrey = FindNearestUncapturedPrey(anchor.position);
-                if (nearestPrey != null)
-                {
-                    Vector3 toPrey = nearestPrey.transform.position - anchor.position;
-                    toPrey.y = 0f;
-                    if (toPrey.sqrMagnitude > 0.0001f)
-                        return toPrey.normalized;
-                }
-            }
-
-            Vector3 forward = resolvedAimReference != null
-                ? resolvedAimReference.forward
-                : anchor.forward;
-
+            Vector3 forward = transform.forward;
             forward.y = 0f;
             if (forward.sqrMagnitude < 0.0001f)
-                forward = anchor.forward;
-
-            return forward.normalized;
-        }
-
-        private static CirclePrey FindNearestUncapturedPrey(Vector3 fromPosition)
-        {
-            CirclePrey[] preys = FindObjectsByType<CirclePrey>();
-            CirclePrey nearest = null;
-            float bestDistance = float.MaxValue;
-
-            for (int i = 0; i < preys.Length; i++)
             {
-                CirclePrey prey = preys[i];
-                if (prey == null || prey.IsCaptured)
-                    continue;
-
-                float distance = Vector3.Distance(fromPosition, prey.transform.position);
-                if (distance < bestDistance)
-                {
-                    bestDistance = distance;
-                    nearest = prey;
-                }
+                forward = transform.forward;
+                forward.y = 0f;
             }
 
-            return nearest;
+            forward.Normalize();
+            return (forward + Vector3.up * launchArcLift).normalized;
         }
 
         private Transform FindBone(string boneName)
@@ -158,7 +120,7 @@ namespace Dexter.Spider
             ResolveReferences();
 
             Transform anchor = resolvedLaunchAnchor != null ? resolvedLaunchAnchor : transform;
-            Vector3 direction = ResolveAimDirection(anchor);
+            Vector3 direction = ResolveAimDirection();
 
             Vector3 origin = anchor.position
                 + Vector3.up * launchHeight

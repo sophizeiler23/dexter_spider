@@ -877,7 +877,6 @@ MonoBehaviour:
   launchHeight: 0.35
   launchForwardOffset: 0.45
   cooldownSeconds: 0.8
-  aimAtNearestPrey: 1
 --- !u!114 &1600001007
 MonoBehaviour:
   m_ObjectHideFlags: 0

@@ -22,6 +22,17 @@ namespace Dexter.Butterfly
         public float FlapSpeedMultiplier { get; set; } = 1f;
         public float FlapAngleMultiplier { get; set; } = 1f;
 
+        public void StopFlapping()
+        {
+            FlapSpeedMultiplier = 0f;
+            FlapAngleMultiplier = 0f;
+
+            ApplyFlap(wingUpperLeft, upperLeftRest, 0f);
+            ApplyFlap(wingUpperRight, upperRightRest, 0f);
+            ApplyFlap(wingLowerLeft, lowerLeftRest, 0f);
+            ApplyFlap(wingLowerRight, lowerRightRest, 0f);
+        }
+
         private void Awake()
         {
             CacheWing("wing_upper.L", ref wingUpperLeft, ref upperLeftRest);

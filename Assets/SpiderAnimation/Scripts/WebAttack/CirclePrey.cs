@@ -1,9 +1,10 @@
+using Dexter.Butterfly;
 using UnityEngine;
 
 namespace Dexter.Spider
 {
     /// <summary>
-    /// Placeholder prey represented as a flat circle. Captured when enveloped by an expanding web net.
+    /// Prey target for web shots. On impact the butterfly stops animating and falls with physics.
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class CirclePrey : MonoBehaviour
@@ -14,8 +15,17 @@ namespace Dexter.Spider
         [SerializeField] private Color normalColor = new(0.95f, 0.15f, 0.1f, 1f);
         [SerializeField] private Color capturedColor = new(0.55f, 0.55f, 0.6f, 1f);
 
+        [Header("Knockdown")]
+        [SerializeField, Min(0.0001f)] private float bodyMassKg = 0.0008f;
+        [SerializeField, Min(0f)] private float knockdownImpulse = 0.35f;
+        [SerializeField, Min(0f)] private float downwardImpulse = 0.12f;
+        [SerializeField, Min(0f)] private float tumbleTorque = 0.08f;
+        [SerializeField, Min(0f)] private float linearDrag = 0.2f;
+        [SerializeField, Min(0f)] private float angularDrag = 0.5f;
+
         private Renderer[] preyRenderers;
         private bool isCaptured;
+        private Rigidbody body;
 
         public bool IsCaptured => isCaptured;
         public float Radius => radius;
@@ -57,20 +67,74 @@ namespace Dexter.Spider
             radius = Mathf.Max(0.01f, radius);
         }
 
-        public void Capture(Transform webAnchor)
+        public void KnockDownFromWeb(Vector3 impactVelocity, Vector3 impactPoint)
         {
-            if (isCaptured || webAnchor == null)
+            if (isCaptured)
                 return;
 
             isCaptured = true;
             ApplyColor(capturedColor);
+            StopButterflyMotion();
+            EnableKnockdownPhysics(impactVelocity, impactPoint);
+        }
 
-            Transform preyTransform = transform;
-            preyTransform.SetParent(webAnchor, true);
+        private void StopButterflyMotion()
+        {
+            ButterflyBehavior behavior = GetComponent<ButterflyBehavior>();
+            if (behavior != null)
+                behavior.enabled = false;
 
-            Vector3 pullTarget = webAnchor.position;
-            pullTarget.y = preyTransform.position.y;
-            preyTransform.position = Vector3.Lerp(preyTransform.position, pullTarget, 0.65f);
+            ButterflyWingFlapPreview wingFlap = GetComponent<ButterflyWingFlapPreview>();
+            if (wingFlap != null)
+            {
+                wingFlap.StopFlapping();
+                wingFlap.enabled = false;
+            }
+
+            Animator animator = GetComponent<Animator>();
+            if (animator != null)
+                animator.enabled = false;
+        }
+
+        private void EnableKnockdownPhysics(Vector3 impactVelocity, Vector3 impactPoint)
+        {
+            body = GetComponent<Rigidbody>();
+            if (body == null)
+                body = gameObject.AddComponent<Rigidbody>();
+
+            body.mass = bodyMassKg;
+            body.linearDamping = linearDrag;
+            body.angularDamping = angularDrag;
+            body.useGravity = true;
+            body.interpolation = RigidbodyInterpolation.Interpolate;
+            body.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
+
+            Collider collider = GetComponent<Collider>();
+            if (collider == null)
+                collider = GetComponentInChildren<Collider>();
+
+            if (collider != null && !collider.enabled)
+                collider.enabled = true;
+
+            Vector3 pushDirection = impactVelocity.sqrMagnitude > 0.01f
+                ? impactVelocity.normalized
+                : transform.position - impactPoint;
+
+            if (pushDirection.sqrMagnitude < 0.0001f)
+                pushDirection = Vector3.forward;
+
+            pushDirection.y = 0f;
+            if (pushDirection.sqrMagnitude < 0.0001f)
+                pushDirection = Vector3.down;
+            else
+                pushDirection.Normalize();
+
+            Vector3 impulse = pushDirection * knockdownImpulse +
+                Vector3.down * downwardImpulse;
+            body.AddForceAtPosition(impulse, impactPoint, ForceMode.Impulse);
+            body.AddTorque(
+                Random.insideUnitSphere * tumbleTorque,
+                ForceMode.Impulse);
         }
 
         private void ApplyColor(Color color)

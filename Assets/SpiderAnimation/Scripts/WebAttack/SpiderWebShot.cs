@@ -4,25 +4,30 @@ using UnityEngine;
 namespace Dexter.Spider
 {
     /// <summary>
-    /// A single web shot: dragline silk extends forward until it hits prey, then an orb-web net blooms on the target.
-    /// Uses view-aligned line renderers for smooth, anti-aliased silk strands.
+    /// A single web shot: a compact orb-web projectile flies forward in a ballistic arc, then blooms on impact.
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class SpiderWebShot : MonoBehaviour
     {
         private enum Phase
         {
-            Extending,
+            Flying,
             Expanding,
             Holding,
             Finished
         }
 
-        [Header("Line Phase")]
-        [SerializeField, Min(0.5f)] private float maxShotRange = 5f;
-        [SerializeField, Min(0.1f)] private float lineExtendSpeed = 4f;
-        [SerializeField, Min(0.001f)] private float draglineWidth = 0.012f;
-        [SerializeField, Range(0f, 0.2f)] private float draglineSag = 0.03f;
+        [Header("Projectile")]
+        [SerializeField, Min(0.5f)] private float maxShotRange = 8f;
+        [SerializeField, Min(1f)] private float launchSpeed = 12f;
+        [SerializeField, Min(0f)] private float gravity = 9.81f;
+        [SerializeField, Min(0.01f)] private float projectileHitRadius = 0.15f;
+        [SerializeField, Min(0.1f)] private float projectileWebRadius = 0.38f;
+        [SerializeField, Min(4)] private int trajectoryPointCount = 20;
+
+        [Header("Flight Trail")]
+        [SerializeField, Min(0.001f)] private float trailWidth = 0.018f;
+        [SerializeField, Range(0f, 0.35f)] private float trailSag = 0.06f;
 
         [Header("Net Phase")]
         [SerializeField, Min(0.1f)] private float defaultNetRadius = 0.6f;
@@ -41,9 +46,10 @@ namespace Dexter.Spider
         [SerializeField, Min(0.001f)] private float captureThreadWidth = 0.0065f;
         [SerializeField, Min(0.001f)] private float frameThreadWidth = 0.01f;
         [SerializeField, Min(0.001f)] private float auxiliaryThreadWidth = 0.004f;
+        [SerializeField, Min(0.001f)] private float projectileThreadWidth = 0.014f;
 
-        [Header("Motion")]
-        [SerializeField, Range(0f, 0.03f)] private float windSwayAmplitude = 0.008f;
+        [Header("Wind")]
+        [SerializeField, Range(0f, 0.08f)] private float windSwayAmplitude = 0.025f;
         [SerializeField, Min(0f)] private float windSwayFrequency = 2.4f;
 
         [Header("Droplets")]
@@ -53,27 +59,33 @@ namespace Dexter.Spider
         [Header("Lifetime")]
         [SerializeField, Min(0f)] private float holdDuration = 2.5f;
 
-        private Phase phase = Phase.Extending;
+        private Phase phase = Phase.Flying;
         private Vector3 origin;
-        private Vector3 direction = Vector3.forward;
-        private float currentLineLength;
-        private float targetLineLength;
+        private Vector3 launchDirection = Vector3.forward;
+        private Vector3 tipWorldPosition;
+        private Vector3 previousTipWorldPosition;
+        private Vector3 tipVelocity;
         private float activeNetRadius;
         private float currentNetRadius;
         private float phaseTimer;
         private int randomSeed;
-        private CirclePrey targetPrey;
+        private CirclePrey hitPrey;
         private bool netBuilt;
         private float netWidthScale = 1f;
 
-        private LineRenderer draglineRenderer;
+        private Transform projectileRoot;
+        private LineRenderer trailRenderer;
+        private readonly List<Vector3> trajectoryPoints = new();
+        private readonly List<LineRenderer> projectileStrandRenderers = new();
+        private readonly List<Vector3[]> projectileStrandPoints = new();
+        private IReadOnlyList<WebStrand> projectileStrands;
+
         private Transform netRoot;
         private readonly List<LineRenderer> strandRenderers = new();
         private IReadOnlyList<WebStrand> fullWebStrands;
         private readonly List<Vector3[]> baseStrandPoints = new();
         private readonly List<Vector3[]> workingStrandPoints = new();
         private readonly List<DropletAnchor> dropletAnchors = new();
-        private CirclePrey capturedPrey;
         private Material lineMaterial;
 
         private readonly struct DropletAnchor
@@ -92,32 +104,34 @@ namespace Dexter.Spider
             public float Scale { get; }
         }
 
-        public void Launch(Vector3 launchOrigin, Vector3 launchDirection, CirclePrey preyTarget = null)
+        public void Launch(Vector3 launchOrigin, Vector3 launchDirection)
         {
             origin = launchOrigin;
-            direction = launchDirection.sqrMagnitude > 0.0001f
+            Vector3 normalizedDirection = launchDirection.sqrMagnitude > 0.0001f
                 ? launchDirection.normalized
                 : Vector3.forward;
 
-            targetPrey = preyTarget;
+            this.launchDirection = normalizedDirection;
             randomSeed = Random.Range(0, int.MaxValue);
             lineMaterial = SpiderWebMaterialFactory.GetLineMaterial();
-            transform.position = origin;
-            transform.rotation = Quaternion.LookRotation(direction, Vector3.up);
 
-            targetLineLength = ResolveTargetLineLength();
-            activeNetRadius = ResolveNetRadius();
+            tipWorldPosition = origin;
+            previousTipWorldPosition = origin;
+            tipVelocity = normalizedDirection * launchSpeed;
 
-            CreateDragline();
-            UpdateDraglineLine();
+            trajectoryPoints.Clear();
+            trajectoryPoints.Add(origin);
+
+            CreateProjectileVisual();
+            UpdateProjectileVisual(applyWind: false);
         }
 
         private void Update()
         {
             switch (phase)
             {
-                case Phase.Extending:
-                    UpdateExtending();
+                case Phase.Flying:
+                    UpdateFlying();
                     break;
                 case Phase.Expanding:
                     UpdateExpanding();
@@ -131,58 +145,96 @@ namespace Dexter.Spider
             }
         }
 
-        private float ResolveTargetLineLength()
+        private void UpdateFlying()
         {
-            if (targetPrey == null || targetPrey.IsCaptured)
-                return maxShotRange;
+            previousTipWorldPosition = tipWorldPosition;
 
-            Vector3 toPrey = targetPrey.transform.position - origin;
-            float alongRay = Vector3.Dot(toPrey, direction);
-            return Mathf.Clamp(alongRay, 0.1f, maxShotRange);
-        }
+            tipVelocity += Vector3.down * gravity * Time.deltaTime;
+            tipWorldPosition += tipVelocity * Time.deltaTime;
 
-        private float ResolveNetRadius()
-        {
-            if (targetPrey != null && !targetPrey.IsCaptured)
-                return Mathf.Max(0.15f, targetPrey.CaptureExtent * netRadiusPadding);
+            RecordTrajectoryPoint(tipWorldPosition);
+            UpdateProjectileVisual(applyWind: true);
 
-            return defaultNetRadius;
-        }
+            if (TryProjectileHit(out CirclePrey prey, out Vector3 hitPoint))
+            {
+                hitPrey = prey;
+                tipWorldPosition = hitPoint;
+                RecordTrajectoryPoint(hitPoint);
+                prey.KnockDownFromWeb(tipVelocity, hitPoint);
+                BeginNetExpansion();
+                return;
+            }
 
-        private void UpdateExtending()
-        {
-            currentLineLength = Mathf.MoveTowards(
-                currentLineLength,
-                targetLineLength,
-                lineExtendSpeed * Time.deltaTime);
-
-            UpdateDraglineLine();
-
-            if (HasReachedPrey() || Mathf.Approximately(currentLineLength, targetLineLength))
+            if (Vector3.Distance(origin, tipWorldPosition) >= maxShotRange)
                 BeginNetExpansion();
         }
 
-        private bool HasReachedPrey()
+        private void RecordTrajectoryPoint(Vector3 point)
         {
-            if (targetPrey == null || targetPrey.IsCaptured)
+            if (trajectoryPoints.Count == 0 ||
+                Vector3.Distance(trajectoryPoints[^1], point) > 0.02f)
+                trajectoryPoints.Add(point);
+
+            while (trajectoryPoints.Count > trajectoryPointCount)
+                trajectoryPoints.RemoveAt(0);
+        }
+
+        private bool TryProjectileHit(
+            out CirclePrey prey,
+            out Vector3 hitPoint)
+        {
+            prey = null;
+            hitPoint = tipWorldPosition;
+
+            Vector3 displacement = tipWorldPosition - previousTipWorldPosition;
+            float distance = displacement.magnitude;
+            if (distance <= 0.0001f)
                 return false;
 
-            Vector3 tip = origin + direction * currentLineLength;
-            return Vector3.Distance(tip, targetPrey.transform.position) <= targetPrey.CaptureExtent;
+            Vector3 direction = displacement / distance;
+            RaycastHit[] hits = Physics.SphereCastAll(
+                previousTipWorldPosition,
+                projectileHitRadius,
+                direction,
+                distance,
+                ~0,
+                QueryTriggerInteraction.Collide);
+
+            float closestDistance = float.MaxValue;
+            for (int i = 0; i < hits.Length; i++)
+            {
+                RaycastHit hit = hits[i];
+                CirclePrey candidate = hit.collider.GetComponent<CirclePrey>();
+                if (candidate == null)
+                    candidate = hit.collider.GetComponentInParent<CirclePrey>();
+                if (candidate == null || candidate.IsCaptured)
+                    continue;
+
+                if (hit.distance >= closestDistance)
+                    continue;
+
+                closestDistance = hit.distance;
+                prey = candidate;
+                hitPoint = hit.point;
+            }
+
+            return prey != null;
         }
 
         private void BeginNetExpansion()
         {
-            if (targetPrey != null && !targetPrey.IsCaptured)
-            {
-                Vector3 preyPosition = targetPrey.transform.position;
-                currentLineLength = Mathf.Max(0.1f, Vector3.Dot(preyPosition - origin, direction));
-                activeNetRadius = ResolveNetRadius();
-            }
-
-            UpdateDraglineLine();
+            DestroyProjectileVisual();
+            activeNetRadius = ResolveNetRadius();
             BuildNetAtTip();
             phase = Phase.Expanding;
+        }
+
+        private float ResolveNetRadius()
+        {
+            if (hitPrey != null)
+                return Mathf.Max(0.15f, hitPrey.CaptureExtent * netRadiusPadding);
+
+            return defaultNetRadius;
         }
 
         private void UpdateExpanding()
@@ -199,7 +251,6 @@ namespace Dexter.Spider
 
             UpdateWorkingStrands(expansion01, applyWind: true);
             UpdateNetLines(expansion01);
-            TryCapturePrey();
 
             if (Mathf.Approximately(currentNetRadius, activeNetRadius))
             {
@@ -216,6 +267,158 @@ namespace Dexter.Spider
 
             if (phaseTimer >= holdDuration)
                 phase = Phase.Finished;
+        }
+
+        private void CreateProjectileVisual()
+        {
+            GameObject projectileObject = new("WebProjectile");
+            projectileRoot = projectileObject.transform;
+            projectileRoot.SetParent(transform, true);
+            projectileRoot.position = tipWorldPosition;
+
+            OrbWebSettings settings = new(
+                projectileWebRadius,
+                10,
+                4,
+                0.55f,
+                0.02f,
+                0.08f * projectileWebRadius,
+                6,
+                1,
+                0.04f,
+                0.03f,
+                randomSeed);
+
+            projectileStrands = ProceduralOrbWeb.Generate(settings);
+            projectileStrandPoints.Clear();
+            projectileStrandRenderers.Clear();
+
+            for (int i = 0; i < projectileStrands.Count; i++)
+            {
+                WebStrand strand = projectileStrands[i];
+                GameObject strandObject = new($"ProjectileStrand_{strand.Type}_{i}");
+                strandObject.transform.SetParent(projectileRoot, false);
+
+                LineRenderer line = strandObject.AddComponent<LineRenderer>();
+                float width = strand.Type == WebStrandType.Radial
+                    ? projectileThreadWidth
+                    : captureThreadWidth * 1.2f;
+                ConfigureLineRenderer(line, width, StrandColor(strand.Type));
+                line.useWorldSpace = true;
+                projectileStrandRenderers.Add(line);
+                projectileStrandPoints.Add((Vector3[])strand.Points.Clone());
+            }
+
+            GameObject trailObject = new("FlightTrail");
+            trailObject.transform.SetParent(projectileRoot, false);
+            trailRenderer = trailObject.AddComponent<LineRenderer>();
+            ConfigureLineRenderer(
+                trailRenderer,
+                trailWidth,
+                new Color(0.94f, 0.97f, 1f, 0.85f));
+            trailRenderer.useWorldSpace = true;
+            trailRenderer.widthCurve = BuildTrailWidthCurve();
+        }
+
+        private static AnimationCurve BuildTrailWidthCurve()
+        {
+            return new AnimationCurve(
+                new Keyframe(0f, 0.15f),
+                new Keyframe(0.25f, 0.55f),
+                new Keyframe(1f, 1f));
+        }
+
+        private void UpdateProjectileVisual(bool applyWind)
+        {
+            if (projectileRoot == null)
+                return;
+
+            projectileRoot.position = tipWorldPosition;
+
+            if (tipVelocity.sqrMagnitude > 0.01f)
+            {
+                Vector3 up = Mathf.Abs(Vector3.Dot(tipVelocity.normalized, Vector3.up)) > 0.95f
+                    ? Vector3.forward
+                    : Vector3.up;
+                projectileRoot.rotation = Quaternion.LookRotation(tipVelocity.normalized, up);
+            }
+
+            UpdateProjectileStrands(applyWind);
+            UpdateFlightTrail(applyWind);
+        }
+
+        private void UpdateProjectileStrands(bool applyWind)
+        {
+            float time = Time.time * windSwayFrequency;
+            Vector3 center = tipWorldPosition;
+
+            for (int i = 0; i < projectileStrandRenderers.Count; i++)
+            {
+                Vector3[] localPoints = projectileStrandPoints[i];
+                Vector3[] worldPoints = new Vector3[localPoints.Length];
+
+                for (int pointIndex = 0; pointIndex < localPoints.Length; pointIndex++)
+                {
+                    Vector3 point = center + localPoints[pointIndex];
+
+                    if (applyWind && windSwayAmplitude > 0f)
+                    {
+                        float phase = time + i * 0.31f + pointIndex * 0.17f;
+                        point += projectileRoot.right * (Mathf.Sin(phase) * windSwayAmplitude);
+                        point += projectileRoot.up * (Mathf.Cos(phase * 0.85f) * windSwayAmplitude * 0.35f);
+                    }
+
+                    worldPoints[pointIndex] = point;
+                }
+
+                LineRenderer line = projectileStrandRenderers[i];
+                line.positionCount = worldPoints.Length;
+                line.SetPositions(worldPoints);
+            }
+        }
+
+        private void UpdateFlightTrail(bool applyWind)
+        {
+            if (trailRenderer == null || trajectoryPoints.Count < 2)
+            {
+                if (trailRenderer != null)
+                    trailRenderer.positionCount = 0;
+                return;
+            }
+
+            int count = trajectoryPoints.Count;
+            trailRenderer.positionCount = count;
+
+            for (int i = 0; i < count; i++)
+            {
+                float t = i / (float)(count - 1);
+                Vector3 point = trajectoryPoints[i];
+
+                float sag = trailSag * 4f * t * (1f - t);
+                point.y -= sag;
+
+                if (applyWind && windSwayAmplitude > 0f)
+                {
+                    float envelope = 4f * t * (1f - t);
+                    float phase = Time.time * windSwayFrequency + t * 4f;
+                    point += Vector3.right * (Mathf.Sin(phase) * windSwayAmplitude * envelope * 2f);
+                }
+
+                trailRenderer.SetPosition(i, point);
+            }
+        }
+
+        private void DestroyProjectileVisual()
+        {
+            if (projectileRoot != null)
+            {
+                Destroy(projectileRoot.gameObject);
+                projectileRoot = null;
+            }
+
+            trailRenderer = null;
+            projectileStrandRenderers.Clear();
+            projectileStrandPoints.Clear();
         }
 
         private void BuildNetAtTip()
@@ -259,20 +462,11 @@ namespace Dexter.Spider
             }
         }
 
-        private void CreateDragline()
-        {
-            GameObject draglineObject = new("Dragline");
-            draglineObject.transform.SetParent(transform, false);
-            draglineRenderer = draglineObject.AddComponent<LineRenderer>();
-            ConfigureLineRenderer(draglineRenderer, draglineWidth, new Color(0.94f, 0.97f, 1f, 0.95f));
-            draglineRenderer.useWorldSpace = false;
-        }
-
         private void CreateNetLines()
         {
             GameObject netObject = new("OrbWeb");
             netRoot = netObject.transform;
-            netRoot.SetParent(transform, false);
+            netRoot.SetParent(transform, true);
 
             for (int i = 0; i < fullWebStrands.Count; i++)
             {
@@ -284,7 +478,7 @@ namespace Dexter.Spider
                 float width = StrandWidth(strand.Type) * netWidthScale;
                 Color color = StrandColor(strand.Type);
                 ConfigureLineRenderer(line, width, color);
-                line.useWorldSpace = false;
+                line.useWorldSpace = true;
                 strandRenderers.Add(line);
             }
         }
@@ -348,24 +542,6 @@ namespace Dexter.Spider
             line.loop = false;
         }
 
-        private void UpdateDraglineLine()
-        {
-            if (draglineRenderer == null)
-                return;
-
-            const int samples = 24;
-            draglineRenderer.positionCount = samples + 1;
-            Vector3 end = direction * currentLineLength;
-
-            for (int i = 0; i <= samples; i++)
-            {
-                float t = i / (float)samples;
-                Vector3 point = end * t;
-                point.y -= draglineSag * 4f * t * (1f - t);
-                draglineRenderer.SetPosition(i, point);
-            }
-        }
-
         private void UpdateWorkingStrands(float expansion01, bool applyWind)
         {
             float expansion = Mathf.Clamp01(expansion01);
@@ -398,12 +574,20 @@ namespace Dexter.Spider
 
         private void UpdateNetLines(float expansion01)
         {
+            if (netRoot == null)
+                return;
+
+            Vector3 netCenter = netRoot.position;
             for (int i = 0; i < strandRenderers.Count; i++)
             {
                 LineRenderer line = strandRenderers[i];
-                Vector3[] points = DensifyPolyline(workingStrandPoints[i], 0.03f);
-                line.positionCount = points.Length;
-                line.SetPositions(points);
+                Vector3[] localPoints = DensifyPolyline(workingStrandPoints[i], 0.03f);
+                Vector3[] worldPoints = new Vector3[localPoints.Length];
+                for (int pointIndex = 0; pointIndex < localPoints.Length; pointIndex++)
+                    worldPoints[pointIndex] = netCenter + localPoints[pointIndex];
+
+                line.positionCount = worldPoints.Length;
+                line.SetPositions(worldPoints);
 
                 float width = StrandWidth(fullWebStrands[i].Type) * netWidthScale * Mathf.Lerp(0.2f, 1f, expansion01);
                 line.startWidth = width;
@@ -442,6 +626,10 @@ namespace Dexter.Spider
 
         private void UpdateDropletPositions()
         {
+            if (netRoot == null)
+                return;
+
+            Vector3 netCenter = netRoot.position;
             for (int i = 0; i < dropletAnchors.Count; i++)
             {
                 DropletAnchor anchor = dropletAnchors[i];
@@ -450,7 +638,7 @@ namespace Dexter.Spider
 
                 Vector3[] strand = workingStrandPoints[anchor.StrandIndex];
                 int pointIndex = Mathf.Clamp(anchor.PointIndex, 0, strand.Length - 1);
-                anchor.Transform.localPosition = strand[pointIndex];
+                anchor.Transform.position = netCenter + strand[pointIndex];
             }
         }
 
@@ -481,42 +669,14 @@ namespace Dexter.Spider
             if (netRoot == null)
                 return;
 
-            if (targetPrey != null && !targetPrey.IsCaptured)
-                netRoot.position = targetPrey.transform.position;
-            else
-                netRoot.localPosition = direction * currentLineLength;
-
-            netRoot.localRotation = Quaternion.identity;
+            netRoot.position = tipWorldPosition;
+            netRoot.rotation = Quaternion.identity;
         }
 
         private void SetNetVisible(bool visible)
         {
             if (netRoot != null)
                 netRoot.gameObject.SetActive(visible);
-        }
-
-        private void TryCapturePrey()
-        {
-            if (capturedPrey != null || netRoot == null)
-                return;
-
-            Vector3 netCenter = netRoot.position;
-            Collider[] overlaps = Physics.OverlapSphere(netCenter, currentNetRadius);
-
-            for (int i = 0; i < overlaps.Length; i++)
-            {
-                CirclePrey prey = overlaps[i].GetComponent<CirclePrey>();
-                if (prey == null || prey.IsCaptured)
-                    continue;
-
-                float distance = Vector3.Distance(netCenter, prey.transform.position);
-                if (distance <= currentNetRadius + prey.CaptureExtent * 0.15f)
-                {
-                    capturedPrey = prey;
-                    prey.Capture(netRoot);
-                    break;
-                }
-            }
         }
     }
 }
