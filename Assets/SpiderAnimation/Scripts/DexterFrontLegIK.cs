@@ -26,6 +26,10 @@ namespace Dexter.Spider
         [SerializeField] private bool tareOnEnable;
         [SerializeField, Min(0.25f)] private float calibrationDurationSeconds = 10f;
 
+        [Header("Calibration")]
+        [Tooltip("Master switch for the calibration phase. Turn off to skip the on-screen calibration HUD entirely and use live, uncalibrated input immediately.")]
+        [SerializeField] private bool enableCalibrationPhase = true;
+
         [Header("iPad Active Movement Calibration")]
         [Tooltip("When iPad position frames are detected, pause movement and learn a comfortable walking displacement during the first calibration period. Physical Dexter/editor input is unaffected.")]
         [FormerlySerializedAs("calibrateDexterMovementOnStart")]
@@ -352,8 +356,10 @@ namespace Dexter.Spider
         public bool IsTaring => isTaring;
         public bool IsIpadMovementCalibrating =>
             isIpadMovementCalibrating;
+        private bool IsCalibrationPhaseActive =>
+            enableCalibrationPhase && calibrateIpadMovementOnStart;
         public bool ShouldShowCalibrationHud =>
-            calibrateIpadMovementOnStart && IsCalibrationHudVisible();
+            IsCalibrationPhaseActive && IsCalibrationHudVisible();
         public float ForwardSpeed => forwardSpeed;
         public string TraceFilePath => traceFilePath;
 
@@ -368,7 +374,7 @@ namespace Dexter.Spider
                 leftLegs == null || rightLegs == null)
                 InitializeRig();
             PrepareIpadMovementCalibration();
-            if (tareOnEnable && !calibrateIpadMovementOnStart)
+            if (tareOnEnable && !IsCalibrationPhaseActive)
                 BeginTare();
             else
                 UseUntaredRelayDefaults();
@@ -378,7 +384,7 @@ namespace Dexter.Spider
         private void PrepareIpadMovementCalibration()
         {
             waitingForIpadMovementCalibration =
-                calibrateIpadMovementOnStart;
+                IsCalibrationPhaseActive;
             isIpadMovementCalibrating = false;
             ipadMovementCalibrationComplete = false;
             ipadMovementCalibrationStart = -1f;

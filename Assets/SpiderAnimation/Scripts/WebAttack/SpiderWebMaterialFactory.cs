@@ -9,6 +9,34 @@ namespace Dexter.Spider
     {
         private static Material sharedLineMaterial;
         private static Texture2D lineFalloffTexture;
+        private static Shader cocoonShader;
+
+        /// <summary>Creates a standalone opaque white-silk material for a cocoon instance.</summary>
+        public static Material CreateCocoonMaterial(Color color)
+        {
+            if (cocoonShader == null)
+            {
+                cocoonShader = Shader.Find("Universal Render Pipeline/Lit");
+                if (cocoonShader == null)
+                    cocoonShader = Shader.Find("Standard");
+                if (cocoonShader == null)
+                    cocoonShader = Shader.Find("Sprites/Default");
+            }
+
+            Material material = new(cocoonShader) { name = "SpiderWebCocoonRuntime" };
+
+            if (material.HasProperty("_BaseColor"))
+                material.SetColor("_BaseColor", color);
+            else
+                material.color = color;
+
+            if (material.HasProperty("_Smoothness"))
+                material.SetFloat("_Smoothness", 0.1f);
+            if (material.HasProperty("_Glossiness"))
+                material.SetFloat("_Glossiness", 0.1f);
+
+            return material;
+        }
 
         public static Material GetLineMaterial()
         {
