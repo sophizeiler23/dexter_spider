@@ -70,7 +70,7 @@ namespace Dexter.Spider
 
             GameObject shotObject = new("SpiderWebShot");
             SpiderWebShot shot = shotObject.AddComponent<SpiderWebShot>();
-            shot.Launch(origin, direction);
+            shot.Launch(origin, direction, transform);
         }
 
         private void ResolveReferences()

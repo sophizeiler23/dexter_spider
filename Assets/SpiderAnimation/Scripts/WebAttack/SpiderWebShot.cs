@@ -29,9 +29,14 @@ namespace Dexter.Spider
         [SerializeField, Min(0.001f)] private float trailWidth = 0.018f;
         [SerializeField, Range(0f, 0.35f)] private float trailSag = 0.06f;
 
+        [Header("Impact")]
+        [Tooltip("Small offset kept between the net and the surface it stuck to, to avoid z-fighting.")]
+        [SerializeField, Range(0f, 0.05f)] private float netSurfaceOffset = 0.01f;
+        [Tooltip("Extra clearance added so the surface-depth probing rays always start outside the collided shape.")]
+        [SerializeField, Min(0.05f)] private float surfaceProbeMargin = 0.25f;
+
         [Header("Net Phase")]
         [SerializeField, Min(0.1f)] private float defaultNetRadius = 0.6f;
-        [SerializeField, Range(1f, 2.5f)] private float netRadiusPadding = 1.2f;
         [SerializeField, Range(0.05f, 0.5f)] private float netExpandDuration = 0.18f;
         [SerializeField, Range(6, 28)] private int spokeCount = 18;
         [SerializeField, Range(3, 12)] private int ringCount = 8;
@@ -69,9 +74,12 @@ namespace Dexter.Spider
         private float currentNetRadius;
         private float phaseTimer;
         private int randomSeed;
-        private CirclePrey hitPrey;
         private bool netBuilt;
         private float netWidthScale = 1f;
+        private Transform shooterRoot;
+        private Vector3 impactNormal = Vector3.up;
+        private Collider impactCollider;
+        private readonly List<float[]> strandDepthBias = new();
 
         private Transform projectileRoot;
         private LineRenderer trailRenderer;
@@ -104,9 +112,10 @@ namespace Dexter.Spider
             public float Scale { get; }
         }
 
-        public void Launch(Vector3 launchOrigin, Vector3 launchDirection)
+        public void Launch(Vector3 launchOrigin, Vector3 launchDirection, Transform shooter = null)
         {
             origin = launchOrigin;
+            shooterRoot = shooter;
             Vector3 normalizedDirection = launchDirection.sqrMagnitude > 0.0001f
                 ? launchDirection.normalized
                 : Vector3.forward;
@@ -155,18 +164,28 @@ namespace Dexter.Spider
             RecordTrajectoryPoint(tipWorldPosition);
             UpdateProjectileVisual(applyWind: true);
 
-            if (TryProjectileHit(out CirclePrey prey, out Vector3 hitPoint))
+            if (TryProjectileHit(out CirclePrey prey, out Vector3 hitPoint, out Vector3 hitNormal, out Collider hitCollider))
             {
-                hitPrey = prey;
                 tipWorldPosition = hitPoint;
                 RecordTrajectoryPoint(hitPoint);
-                prey.KnockDownFromWeb(tipVelocity, hitPoint);
-                BeginNetExpansion();
+
+                if (prey != null)
+                {
+                    // Prey already gets its own cocoon-wrapping visual on impact, so a
+                    // static orb-web frozen at the old impact point would just look wrong
+                    // once the prey starts falling/tumbling away from it.
+                    prey.KnockDownFromWeb(tipVelocity, hitPoint);
+                    DestroyProjectileVisual();
+                    phase = Phase.Finished;
+                    return;
+                }
+
+                BeginNetExpansion(hitNormal, hitCollider);
                 return;
             }
 
             if (Vector3.Distance(origin, tipWorldPosition) >= maxShotRange)
-                BeginNetExpansion();
+                BeginNetExpansion(Vector3.up, null);
         }
 
         private void RecordTrajectoryPoint(Vector3 point)
@@ -181,10 +200,14 @@ namespace Dexter.Spider
 
         private bool TryProjectileHit(
             out CirclePrey prey,
-            out Vector3 hitPoint)
+            out Vector3 hitPoint,
+            out Vector3 hitNormal,
+            out Collider hitCollider)
         {
             prey = null;
+            hitCollider = null;
             hitPoint = tipWorldPosition;
+            hitNormal = Vector3.up;
 
             Vector3 displacement = tipWorldPosition - previousTipWorldPosition;
             float distance = displacement.magnitude;
@@ -204,10 +227,13 @@ namespace Dexter.Spider
             for (int i = 0; i < hits.Length; i++)
             {
                 RaycastHit hit = hits[i];
+                if (ShouldIgnoreCollider(hit.collider))
+                    continue;
+
                 CirclePrey candidate = hit.collider.GetComponent<CirclePrey>();
                 if (candidate == null)
                     candidate = hit.collider.GetComponentInParent<CirclePrey>();
-                if (candidate == null || candidate.IsCaptured)
+                if (candidate != null && candidate.IsCaptured)
                     continue;
 
                 if (hit.distance >= closestDistance)
@@ -216,14 +242,26 @@ namespace Dexter.Spider
                 closestDistance = hit.distance;
                 prey = candidate;
                 hitPoint = hit.point;
+                hitNormal = hit.normal.sqrMagnitude > 0.0001f ? hit.normal : Vector3.up;
+                hitCollider = hit.collider;
             }
 
-            return prey != null;
+            return hitCollider != null;
         }
 
-        private void BeginNetExpansion()
+        private bool ShouldIgnoreCollider(Collider collider)
+        {
+            if (collider == null)
+                return true;
+
+            return shooterRoot != null && collider.transform.IsChildOf(shooterRoot);
+        }
+
+        private void BeginNetExpansion(Vector3 surfaceNormal, Collider surfaceCollider)
         {
             DestroyProjectileVisual();
+            impactNormal = surfaceNormal.sqrMagnitude > 0.0001f ? surfaceNormal.normalized : Vector3.up;
+            impactCollider = surfaceCollider;
             activeNetRadius = ResolveNetRadius();
             BuildNetAtTip();
             phase = Phase.Expanding;
@@ -231,9 +269,6 @@ namespace Dexter.Spider
 
         private float ResolveNetRadius()
         {
-            if (hitPrey != null)
-                return Mathf.Max(0.15f, hitPrey.CaptureExtent * netRadiusPadding);
-
             return defaultNetRadius;
         }
 
@@ -427,12 +462,20 @@ namespace Dexter.Spider
                 return;
 
             netWidthScale = Mathf.Clamp(activeNetRadius / defaultNetRadius, 0.35f, 1.5f);
+            CreateNetRoot();
+            PositionNetAtTip();
             BuildFullWebData();
             CreateNetLines();
             CreateDroplets();
-            PositionNetAtTip();
             SetNetVisible(true);
             netBuilt = true;
+        }
+
+        private void CreateNetRoot()
+        {
+            GameObject netObject = new("OrbWeb");
+            netRoot = netObject.transform;
+            netRoot.SetParent(transform, true);
         }
 
         private void BuildFullWebData()
@@ -453,21 +496,46 @@ namespace Dexter.Spider
             fullWebStrands = ProceduralOrbWeb.Generate(settings);
             baseStrandPoints.Clear();
             workingStrandPoints.Clear();
+            strandDepthBias.Clear();
 
             for (int i = 0; i < fullWebStrands.Count; i++)
             {
                 Vector3[] points = (Vector3[])fullWebStrands[i].Points.Clone();
                 baseStrandPoints.Add(points);
                 workingStrandPoints.Add((Vector3[])points.Clone());
+                strandDepthBias.Add(ComputeStrandDepthBias(points));
             }
+        }
+
+        /// <summary>
+        /// Projects each flat, tangent-plane strand point onto the actual collided surface
+        /// (once, at build time) so the net conforms to slopes, trunks, and other non-flat
+        /// shapes instead of always hanging as a perfectly flat disc.
+        /// </summary>
+        private float[] ComputeStrandDepthBias(Vector3[] localPoints)
+        {
+            float[] bias = new float[localPoints.Length];
+            if (impactCollider == null || netRoot == null)
+                return bias;
+
+            float probeDistance = Mathf.Max(activeNetRadius, 0.1f) + surfaceProbeMargin;
+
+            for (int i = 0; i < localPoints.Length; i++)
+            {
+                Vector3 tangentPoint = new(localPoints[i].x, localPoints[i].y, 0f);
+                Vector3 worldTangentPos = netRoot.position + netRoot.TransformVector(tangentPoint);
+                Vector3 rayStart = worldTangentPos + impactNormal * probeDistance;
+                Ray ray = new(rayStart, -impactNormal);
+
+                if (impactCollider.Raycast(ray, out RaycastHit hit, probeDistance * 2f))
+                    bias[i] = probeDistance - hit.distance;
+            }
+
+            return bias;
         }
 
         private void CreateNetLines()
         {
-            GameObject netObject = new("OrbWeb");
-            netRoot = netObject.transform;
-            netRoot.SetParent(transform, true);
-
             for (int i = 0; i < fullWebStrands.Count; i++)
             {
                 WebStrand strand = fullWebStrands[i];
@@ -552,10 +620,12 @@ namespace Dexter.Spider
             {
                 Vector3[] source = baseStrandPoints[strandIndex];
                 Vector3[] target = workingStrandPoints[strandIndex];
+                float[] depthBias = strandDepthBias[strandIndex];
 
                 for (int pointIndex = 0; pointIndex < source.Length; pointIndex++)
                 {
                     Vector3 point = source[pointIndex] * expansion;
+                    float depth = depthBias[pointIndex] * expansion;
 
                     if (sway > 0f)
                     {
@@ -565,7 +635,7 @@ namespace Dexter.Spider
                         point += Vector3.right * lateral + Vector3.up * vertical;
                     }
 
-                    target[pointIndex] = point;
+                    target[pointIndex] = new Vector3(point.x, point.y, depth);
                 }
             }
 
@@ -577,14 +647,13 @@ namespace Dexter.Spider
             if (netRoot == null)
                 return;
 
-            Vector3 netCenter = netRoot.position;
             for (int i = 0; i < strandRenderers.Count; i++)
             {
                 LineRenderer line = strandRenderers[i];
                 Vector3[] localPoints = DensifyPolyline(workingStrandPoints[i], 0.03f);
                 Vector3[] worldPoints = new Vector3[localPoints.Length];
                 for (int pointIndex = 0; pointIndex < localPoints.Length; pointIndex++)
-                    worldPoints[pointIndex] = netCenter + localPoints[pointIndex];
+                    worldPoints[pointIndex] = netRoot.TransformPoint(localPoints[pointIndex]);
 
                 line.positionCount = worldPoints.Length;
                 line.SetPositions(worldPoints);
@@ -629,7 +698,6 @@ namespace Dexter.Spider
             if (netRoot == null)
                 return;
 
-            Vector3 netCenter = netRoot.position;
             for (int i = 0; i < dropletAnchors.Count; i++)
             {
                 DropletAnchor anchor = dropletAnchors[i];
@@ -638,7 +706,7 @@ namespace Dexter.Spider
 
                 Vector3[] strand = workingStrandPoints[anchor.StrandIndex];
                 int pointIndex = Mathf.Clamp(anchor.PointIndex, 0, strand.Length - 1);
-                anchor.Transform.position = netCenter + strand[pointIndex];
+                anchor.Transform.position = netRoot.TransformPoint(strand[pointIndex]);
             }
         }
 
@@ -669,8 +737,19 @@ namespace Dexter.Spider
             if (netRoot == null)
                 return;
 
-            netRoot.position = tipWorldPosition;
-            netRoot.rotation = Quaternion.identity;
+            // Lift the net slightly off the surface along its normal to avoid z-fighting,
+            // and orient its (locally flat) plane tangent to whatever it stuck to instead of
+            // always facing the same fixed world direction.
+            netRoot.position = tipWorldPosition + impactNormal * netSurfaceOffset;
+            netRoot.rotation = ResolveNetRotation(impactNormal);
+        }
+
+        private static Quaternion ResolveNetRotation(Vector3 normal)
+        {
+            Vector3 referenceUp = Mathf.Abs(Vector3.Dot(normal, Vector3.up)) > 0.95f
+                ? Vector3.forward
+                : Vector3.up;
+            return Quaternion.LookRotation(normal, referenceUp);
         }
 
         private void SetNetVisible(bool visible)
