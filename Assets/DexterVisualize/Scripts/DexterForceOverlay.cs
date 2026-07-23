@@ -1,8 +1,17 @@
+using Dexter.Spider;
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 namespace Dexter.Visualize
 {
-    /// <summary>Draws the latest five two-axis finger forces as a responsive 2D overlay.</summary>
+    /// <summary>
+    /// Draws the latest five two-axis finger forces as a responsive 2D overlay. For fingers that
+    /// actually drive gameplay (the leg IK's Index/Middle, the ring-finger web aimer's Ring), this
+    /// shows the real post-processing signal those systems act on (baseline-subtracted, and for legs
+    /// also temporally smoothed) rather than the raw relay value, so what you see matches what the
+    /// spider receives. Thumb/Pinky (and Ring with no aimer wired in) have no gameplay pipeline to
+    /// mirror, so they fall back to raw force with this overlay's own optional tare.
+    /// </summary>
     [RequireComponent(typeof(DexterRelayUdpReceiver))]
     public sealed class DexterForceOverlay : MonoBehaviour
     {
@@ -43,11 +52,20 @@ namespace Dexter.Visualize
             new Color32(177, 72, 218, 255)
         };
 
+        [Tooltip("Master switch for this overlay. Uncheck to hide it completely (equivalent to disabling the component, but easier to find/toggle than the component checkbox in the Inspector header). Also toggled in-game by the 'Toggle Key' below.")]
+        [SerializeField] private bool showOverlay = true;
+        [Tooltip("Key that toggles 'Show Overlay' on/off at runtime.")]
+        [SerializeField] private Key toggleKey = Key.Q;
         [SerializeField] private DexterRelayUdpReceiver receiver;
-        [SerializeField] private Dexter.Spider.DexterFrontLegIK frontLegIk;
+        [SerializeField] private DexterFrontLegIK frontLegIk;
+        [SerializeField] private RingFingerShotAimer ringFingerAimer;
         [SerializeField] private DisplayMode displayMode = DisplayMode.FullScreen;
         [SerializeField, Min(1f)] private float pixelsPerNewton = 55f;
         [SerializeField, Min(20f)] private float maximumArrowPixels = 175f;
+        [Tooltip("Opacity the embedded panel fades to (instead of disappearing) once the calibration HUD is no longer showing, so finger input stays visible for reference.")]
+        [SerializeField, Range(0f, 1f)] private float postCalibrationAlpha = 0.35f;
+
+        private float currentAlphaMultiplier = 1f;
 
         private readonly Vector2[] baseline = new Vector2[FingerCount];
         private readonly Vector2[] baselineSum = new Vector2[FingerCount];
@@ -70,7 +88,9 @@ namespace Dexter.Visualize
             if (receiver == null)
                 receiver = GetComponent<DexterRelayUdpReceiver>();
             if (frontLegIk == null)
-                frontLegIk = GetComponent<Dexter.Spider.DexterFrontLegIK>();
+                frontLegIk = GetComponent<DexterFrontLegIK>();
+            if (ringFingerAimer == null)
+                ringFingerAimer = GetComponent<RingFingerShotAimer>();
             circleTexture = CreateCircleTexture(32);
         }
 
@@ -83,27 +103,54 @@ namespace Dexter.Visualize
         private void Update()
         {
             CaptureTareSample();
+            HandleToggleKey();
+        }
+
+        private void HandleToggleKey()
+        {
+            Keyboard keyboard = Keyboard.current;
+            if (keyboard == null)
+                return;
+
+            if (keyboard[toggleKey].wasPressedThisFrame)
+                showOverlay = !showOverlay;
         }
 
         private void OnGUI()
         {
+            if (!showOverlay)
+                return;
+
             EnsureStyles();
 
             if (displayMode == DisplayMode.EmbeddedPanel)
             {
-                if (frontLegIk != null && !frontLegIk.ShouldShowCalibrationHud)
-                    return;
-
+                currentAlphaMultiplier = ResolvePanelAlpha();
                 DrawEmbeddedPanel(DexterSpiderHudLayout.ForcePanel);
                 return;
             }
 
+            currentAlphaMultiplier = 1f;
             DrawRect(new Rect(0f, 0f, Screen.width, Screen.height), new Color(0.055f, 0.065f, 0.085f, 1f));
 
             float width = Mathf.Min(820f, Screen.width - 32f);
             float height = Mathf.Min(650f, Screen.height - 32f);
             var panel = new Rect((Screen.width - width) * 0.5f, (Screen.height - height) * 0.5f, width, height);
             DrawPanel(panel, showFooter: true, compact: false);
+        }
+
+        /// <summary>
+        /// Full opacity while the calibration HUD is showing (matches its previous always-visible
+        /// behavior); fades to <see cref="postCalibrationAlpha"/> afterward instead of disappearing,
+        /// so live finger input stays visible for reference. Always full opacity if there's no
+        /// leg IK reference to check (no calibration concept to gate on).
+        /// </summary>
+        private float ResolvePanelAlpha()
+        {
+            if (frontLegIk == null)
+                return 1f;
+
+            return frontLegIk.ShouldShowCalibrationHud ? 1f : postCalibrationAlpha;
         }
 
         public void BeginTare()
@@ -122,12 +169,12 @@ namespace Dexter.Visualize
         {
             DrawRect(panel, new Color(0.09f, 0.105f, 0.135f, 0.94f));
             DrawOutline(panel, new Color(0.25f, 0.29f, 0.37f, 1f), 1f);
-            GUI.Label(
+            DrawLabel(
                 new Rect(panel.x + 12f, panel.y + 6f, panel.width - 84f, 20f),
                 "DEXTER FORCES",
                 compactTitleStyle);
 
-            if (GUI.Button(new Rect(panel.xMax - 68f, panel.y + 4f, 56f, 22f),
+            if (DrawButton(new Rect(panel.xMax - 68f, panel.y + 4f, 56f, 22f),
                     tareSamplesRemaining > 0 ? "Taring…" : "Tare"))
                 BeginTare();
 
@@ -144,12 +191,12 @@ namespace Dexter.Visualize
             DrawOutline(panel, new Color(0.25f, 0.29f, 0.37f, 1f), 1f);
 
             GUIStyle headerStyle = compact ? compactTitleStyle : titleStyle;
-            GUI.Label(
+            DrawLabel(
                 new Rect(panel.x + 24f, panel.y + 18f, panel.width - 180f, 34f),
                 "DEXTER FORCE VISUALIZER",
                 headerStyle);
 
-            if (GUI.Button(
+            if (DrawButton(
                     new Rect(panel.xMax - 118f, panel.y + 17f, 94f, 30f),
                     tareSamplesRemaining > 0 ? "Taring…" : "Tare"))
                 BeginTare();
@@ -170,7 +217,7 @@ namespace Dexter.Visualize
 
             if (showFooter)
             {
-                GUI.Label(
+                DrawLabel(
                     new Rect(panel.x + 24f, panel.yMax - 35f, panel.width - 48f, 22f),
                     "Arrow direction = Fx / Fy    •    Arrow length = force magnitude    •    Units: N",
                     statusStyle);
@@ -257,15 +304,13 @@ namespace Dexter.Visualize
             float x = compact ? panel.x + 12f : panel.x + 25f;
             float y = compact ? panel.y : panel.y + 54f;
             float width = compact ? panel.width - 24f : panel.width - 50f;
-            GUI.Label(new Rect(x, y, width, compact ? 18f : 24f), text, style);
+            DrawLabel(new Rect(x, y, width, compact ? 18f : 24f), text, style);
         }
 
         private void DrawFinger(Rect plot, int index, bool compact)
         {
             Vector2 origin = PlotPoint(plot, HandLayout[index]);
-            bool hasForce = TryGetForce(index, out Vector2 force);
-            if (hasForce && hasBaseline)
-                force -= baseline[index];
+            bool hasForce = TryGetDisplayForce(index, out Vector2 force, out bool isProcessed);
 
             float scale = compact ? 0.55f : 1f;
             float magnitude = hasForce ? force.magnitude : 0f;
@@ -290,11 +335,51 @@ namespace Dexter.Visualize
                 return;
 
             fingerNameStyle.normal.textColor = color;
-            GUI.Label(new Rect(origin.x - 65f, origin.y + 15f, 130f, 22f), FingerNames[index], fingerNameStyle);
-            GUI.Label(
+            DrawLabel(new Rect(origin.x - 65f, origin.y + 15f, 130f, 22f), FingerNames[index], fingerNameStyle);
+            string valueText = hasForce
+                ? $"{magnitude:F2} N  ({force.x:F2}, {force.y:F2}){(isProcessed ? "  •  live" : string.Empty)}"
+                : "waiting";
+            DrawLabel(
                 new Rect(origin.x - 75f, origin.y + 36f, 150f, 22f),
-                hasForce ? $"{magnitude:F2} N  ({force.x:F2}, {force.y:F2})" : "waiting",
+                valueText,
                 valueStyle);
+        }
+
+        /// <summary>
+        /// Resolves the value to display for a given finger. For Index/Middle (whichever are actually
+        /// assigned as the leg IK's driving fingers) and Ring (when a <see cref="RingFingerShotAimer"/>
+        /// is wired in), this is the real post-baseline signal that gameplay acts on ("live"). Every
+        /// other finger has no gameplay pipeline, so it falls back to raw force with this overlay's
+        /// own optional tare.
+        /// </summary>
+        private bool TryGetDisplayForce(int index, out Vector2 force, out bool isProcessed)
+        {
+            DexterFinger finger = Fingers[index];
+            isProcessed = true;
+
+            if (frontLegIk != null && finger == frontLegIk.LeftLegFinger)
+            {
+                force = frontLegIk.ProcessedLeftForce;
+                return frontLegIk.IsReceiving;
+            }
+
+            if (frontLegIk != null && finger == frontLegIk.RightLegFinger)
+            {
+                force = frontLegIk.ProcessedRightForce;
+                return frontLegIk.IsReceiving;
+            }
+
+            if (finger == DexterFinger.Ring && ringFingerAimer != null)
+            {
+                force = ringFingerAimer.ProcessedForce;
+                return ringFingerAimer.HasBaseline && receiver != null && receiver.HasRecentFrame;
+            }
+
+            isProcessed = false;
+            bool hasForce = TryGetForce(index, out force);
+            if (hasForce && hasBaseline)
+                force -= baseline[index];
+            return hasForce;
         }
 
         private bool TryGetForce(int index, out Vector2 force)
@@ -371,15 +456,7 @@ namespace Dexter.Visualize
             return texture;
         }
 
-        private void DrawCircle(Vector2 center, float diameter, Color color)
-        {
-            Color previous = GUI.color;
-            GUI.color = color;
-            GUI.DrawTexture(new Rect(center.x - diameter * 0.5f, center.y - diameter * 0.5f, diameter, diameter), circleTexture);
-            GUI.color = previous;
-        }
-
-        private static void DrawArrow(Vector2 start, Vector2 end, Color color, float width)
+        private void DrawArrow(Vector2 start, Vector2 end, Color color, float width)
         {
             DrawLine(start, end, color, width);
             Vector2 direction = (end - start).normalized;
@@ -390,12 +467,14 @@ namespace Dexter.Visualize
             DrawLine(end, headBase - perpendicular * headLength * 0.55f, color, width);
         }
 
-        private static void DrawLine(Vector2 start, Vector2 end, Color color, float width)
+        private void DrawLine(Vector2 start, Vector2 end, Color color, float width)
         {
             Vector2 delta = end - start;
             float length = delta.magnitude;
             if (length <= 0.01f)
                 return;
+
+            color.a *= currentAlphaMultiplier;
 
             Matrix4x4 previousMatrix = GUI.matrix;
             Color previousColor = GUI.color;
@@ -406,20 +485,55 @@ namespace Dexter.Visualize
             GUI.color = previousColor;
         }
 
-        private static void DrawRect(Rect rect, Color color)
+        private void DrawRect(Rect rect, Color color)
         {
+            color.a *= currentAlphaMultiplier;
+
             Color previous = GUI.color;
             GUI.color = color;
             GUI.DrawTexture(rect, Texture2D.whiteTexture);
             GUI.color = previous;
         }
 
-        private static void DrawOutline(Rect rect, Color color, float width)
+        private void DrawOutline(Rect rect, Color color, float width)
         {
             DrawRect(new Rect(rect.x, rect.y, rect.width, width), color);
             DrawRect(new Rect(rect.x, rect.yMax - width, rect.width, width), color);
             DrawRect(new Rect(rect.x, rect.y, width, rect.height), color);
             DrawRect(new Rect(rect.xMax - width, rect.y, width, rect.height), color);
+        }
+
+        private void DrawCircle(Vector2 center, float diameter, Color color)
+        {
+            color.a *= currentAlphaMultiplier;
+
+            Color previous = GUI.color;
+            GUI.color = color;
+            GUI.DrawTexture(new Rect(center.x - diameter * 0.5f, center.y - diameter * 0.5f, diameter, diameter), circleTexture);
+            GUI.color = previous;
+        }
+
+        /// <summary>
+        /// Wraps a Label/Button draw with an ambient GUI.color alpha tint. Unlike the shape helpers
+        /// above (which set an explicit opaque color and so must bake the alpha in directly), Unity's
+        /// GUIStyle-based Label/Button content is tinted multiplicatively by whatever GUI.color is
+        /// ambient at draw time, so this is the correct way to fade text/buttons.
+        /// </summary>
+        private void DrawLabel(Rect rect, string text, GUIStyle style)
+        {
+            Color previous = GUI.color;
+            GUI.color = new Color(1f, 1f, 1f, currentAlphaMultiplier);
+            GUI.Label(rect, text, style);
+            GUI.color = previous;
+        }
+
+        private bool DrawButton(Rect rect, string text)
+        {
+            Color previous = GUI.color;
+            GUI.color = new Color(1f, 1f, 1f, currentAlphaMultiplier);
+            bool clicked = GUI.Button(rect, text);
+            GUI.color = previous;
+            return clicked;
         }
     }
 }
