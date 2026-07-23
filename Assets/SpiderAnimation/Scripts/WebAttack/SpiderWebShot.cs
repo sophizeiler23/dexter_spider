@@ -4,7 +4,8 @@ using UnityEngine;
 namespace Dexter.Spider
 {
     /// <summary>
-    /// A single web shot: a compact orb-web projectile flies forward in a ballistic arc, then blooms on impact.
+    /// A single web shot: a compact orb-web projectile flies forward in a ballistic arc, rests as a
+    /// small ball at its landing point for a moment, then quickly blooms into the full net.
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class SpiderWebShot : MonoBehaviour
@@ -12,13 +13,14 @@ namespace Dexter.Spider
         private enum Phase
         {
             Flying,
+            Landed,
             Expanding,
             Holding,
             Finished
         }
 
         [Header("Projectile")]
-        [Tooltip("Maximum travel distance from the launch point. If nothing is hit before this, the shot blooms into a net in mid-air facing straight up.")]
+        [Tooltip("Maximum travel distance from the launch point. If nothing is hit before this, the shot stops and blooms into a net in mid-air facing straight up.")]
         [SerializeField, Min(0.5f)] private float maxShotRange = 8f;
         [Tooltip("Initial speed of the shot along the launch direction. Overridden per-shot by RingFingerShotAimer's gesture-mapped speed when fired that way; only used as-is for the debug Space trigger.")]
         [SerializeField, Min(1f)] private float launchSpeed = 12f;
@@ -46,7 +48,9 @@ namespace Dexter.Spider
         [Header("Net Phase")]
         [Tooltip("Radius the impact net expands to. Silk widths and droplet count are also scaled relative to this default (a smaller final net gets thinner silk and fewer droplets).")]
         [SerializeField, Min(0.1f)] private float defaultNetRadius = 0.6f;
-        [Tooltip("How long the net takes to grow from nothing to its full radius after impact.")]
+        [Tooltip("How long the shot rests as a small ball at its landing point before it quickly blooms into the full net. Set to 0 to bloom immediately on impact, skipping the pause.")]
+        [SerializeField, Range(0f, 5f)] private float netBloomDelaySeconds = 1.2f;
+        [Tooltip("How long the net takes to grow from nothing to its full radius, once it starts blooming after the delay above.")]
         [SerializeField, Range(0.05f, 0.5f)] private float netExpandDuration = 0.18f;
         [Tooltip("Number of straight radial threads running from the net's center to its outer frame, like spokes on a wheel.")]
         [SerializeField, Range(6, 28)] private int spokeCount = 18;
@@ -173,6 +177,9 @@ namespace Dexter.Spider
                 case Phase.Flying:
                     UpdateFlying();
                     break;
+                case Phase.Landed:
+                    UpdateLanded();
+                    break;
                 case Phase.Expanding:
                     UpdateExpanding();
                     break;
@@ -211,12 +218,12 @@ namespace Dexter.Spider
                     return;
                 }
 
-                BeginNetExpansion(hitNormal, hitCollider);
+                BeginLandedWait(hitNormal, hitCollider);
                 return;
             }
 
             if (Vector3.Distance(origin, tipWorldPosition) >= maxShotRange)
-                BeginNetExpansion(Vector3.up, null);
+                BeginLandedWait(Vector3.up, null);
         }
 
         private void RecordTrajectoryPoint(Vector3 point)
@@ -288,11 +295,33 @@ namespace Dexter.Spider
             return shooterRoot != null && collider.transform.IsChildOf(shooterRoot);
         }
 
-        private void BeginNetExpansion(Vector3 surfaceNormal, Collider surfaceCollider)
+        /// <summary>
+        /// Stops the shot at its landing point, leaving just the small decorative ball (its
+        /// in-flight orb-web, minus the flight trail) resting there for <see cref="netBloomDelaySeconds"/>
+        /// before <see cref="BloomIntoNet"/> quickly grows it into the full net.
+        /// </summary>
+        private void BeginLandedWait(Vector3 surfaceNormal, Collider surfaceCollider)
         {
-            DestroyProjectileVisual();
             impactNormal = surfaceNormal.sqrMagnitude > 0.0001f ? surfaceNormal.normalized : Vector3.up;
             impactCollider = surfaceCollider;
+            tipVelocity = Vector3.zero;
+            FreezeProjectileVisual();
+            phase = Phase.Landed;
+            phaseTimer = 0f;
+        }
+
+        private void UpdateLanded()
+        {
+            phaseTimer += Time.deltaTime;
+            UpdateProjectileStrands(applyWind: true);
+
+            if (phaseTimer >= netBloomDelaySeconds)
+                BloomIntoNet();
+        }
+
+        private void BloomIntoNet()
+        {
+            DestroyProjectileVisual();
             activeNetRadius = ResolveNetRadius();
             BuildNetAtTip();
             phase = Phase.Expanding;
@@ -481,6 +510,24 @@ namespace Dexter.Spider
 
                 trailRenderer.SetPosition(i, point);
             }
+        }
+
+        /// <summary>
+        /// Leaves the small decorative orb-web ball in place at the landing point but removes the
+        /// flight trail (which only makes sense while actually moving) and settles the ball's
+        /// orientation flush against the impact surface instead of facing its old flight direction.
+        /// </summary>
+        private void FreezeProjectileVisual()
+        {
+            if (projectileRoot == null)
+                return;
+
+            projectileRoot.position = tipWorldPosition;
+            projectileRoot.rotation = ResolveNetRotation(impactNormal);
+
+            trajectoryPoints.Clear();
+            if (trailRenderer != null)
+                trailRenderer.positionCount = 0;
         }
 
         private void DestroyProjectileVisual()
