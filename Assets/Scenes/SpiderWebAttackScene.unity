@@ -452,7 +452,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 6e022b4d6e99395318ff5a73686461be, type: 3}
       propertyPath: m_LocalPosition.z
-      value: 229.5
+      value: 225.26
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 6e022b4d6e99395318ff5a73686461be, type: 3}
       propertyPath: m_LocalRotation.w
@@ -490,6 +490,10 @@ PrefabInstance:
       propertyPath: m_Name
       value: spider_rig
       objectReference: {fileID: 0}
+    - target: {fileID: 8877953747608240382, guid: 6e022b4d6e99395318ff5a73686461be, type: 3}
+      propertyPath: 'm_Materials.Array.data[0]'
+      value: 
+      objectReference: {fileID: 2100000, guid: 3a7b1c9e5d2f4a6b8c0e1f3a5b7d9e20, type: 2}
     - target: {fileID: 9119259220617699050, guid: 6e022b4d6e99395318ff5a73686461be, type: 3}
       propertyPath: m_IsActive
       value: 1
@@ -604,7 +608,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 9032945126645280672, guid: e5f6a7b8c9d0488990abcdef1234567c, type: 3}
       propertyPath: m_LocalPosition.x
-      value: 406.5
+      value: 405.86
       objectReference: {fileID: 0}
     - target: {fileID: 9032945126645280672, guid: e5f6a7b8c9d0488990abcdef1234567c, type: 3}
       propertyPath: m_LocalPosition.y
@@ -612,7 +616,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 9032945126645280672, guid: e5f6a7b8c9d0488990abcdef1234567c, type: 3}
       propertyPath: m_LocalPosition.z
-      value: 231.7
+      value: 230.34
       objectReference: {fileID: 0}
     - target: {fileID: 9032945126645280672, guid: e5f6a7b8c9d0488990abcdef1234567c, type: 3}
       propertyPath: m_LocalRotation.w
@@ -694,6 +698,16 @@ MonoBehaviour:
   radius: 0.35
   normalColor: {r: 1, g: 1, b: 1, a: 1}
   capturedColor: {r: 0.55, g: 0.55, b: 0.6, a: 1}
+  bodyMassKg: 0.0008
+  knockdownSpeed: 0.35
+  downwardSpeed: 0.12
+  tumbleAngularSpeed: 0.08
+  linearDrag: 0.2
+  angularDrag: 0.5
+  cocoonColor: {r: 0.97, g: 0.97, b: 0.95, a: 1}
+  cocoonGrowDuration: 1.1
+  cocoonPadding: 1.35
+  cocoonLengthStretch: 1.15
 --- !u!1 &1600001001 stripped
 GameObject:
   m_CorrespondingSourceObject: {fileID: 919132149155446097, guid: 6e022b4d6e99395318ff5a73686461be, type: 3}
@@ -753,6 +767,7 @@ MonoBehaviour:
   rightLegFinger: 2
   tareOnEnable: 0
   calibrationDurationSeconds: 10
+  enableCalibrationPhase: 0
   calibrateIpadMovementOnStart: 1
   ipadCalibrationReferencePercentile: 0.45
   minimumIpadCalibrationDisplacement: 5
@@ -876,6 +891,7 @@ MonoBehaviour:
   bodyBoneName: body
   launchHeight: 0.35
   launchForwardOffset: 0.45
+  launchArcLift: 0.12
   cooldownSeconds: 0.8
 --- !u!114 &1600001007
 MonoBehaviour:
@@ -1000,6 +1016,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Dexter.Visualize.DexterForceOverlay
   receiver: {fileID: 1600001003}
+  frontLegIk: {fileID: 0}
   displayMode: 1
   pixelsPerNewton: 55
   maximumArrowPixels: 175

@@ -356,12 +356,25 @@ namespace Dexter.Spider
         public bool IsTaring => isTaring;
         public bool IsIpadMovementCalibrating =>
             isIpadMovementCalibrating;
+        /// <summary>Master calibration-phase switch, independent of the iPad-specific movement calibration below.</summary>
+        public bool IsCalibrationPhaseEnabled => enableCalibrationPhase;
         private bool IsCalibrationPhaseActive =>
             enableCalibrationPhase && calibrateIpadMovementOnStart;
         public bool ShouldShowCalibrationHud =>
             IsCalibrationPhaseActive && IsCalibrationHudVisible();
         public float ForwardSpeed => forwardSpeed;
         public string TraceFilePath => traceFilePath;
+
+        public DexterFinger LeftLegFinger => leftLegFinger;
+        public DexterFinger RightLegFinger => rightLegFinger;
+        /// <summary>
+        /// The left-side finger's force after baseline subtraction and temporal smoothing —
+        /// this is the actual signal <see cref="UpdateTurning"/>/<see cref="UpdateAlternatingLocomotion"/>
+        /// act on, as opposed to the raw value coming straight off the relay.
+        /// </summary>
+        public Vector2 ProcessedLeftForce => smoothedLeftForce;
+        /// <summary>Right-side counterpart of <see cref="ProcessedLeftForce"/>.</summary>
+        public Vector2 ProcessedRightForce => smoothedRightForce;
 
         private void Awake()
         {

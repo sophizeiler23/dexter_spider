@@ -18,15 +18,23 @@ namespace Dexter.Spider
         }
 
         [Header("Projectile")]
+        [Tooltip("Maximum travel distance from the launch point. If nothing is hit before this, the shot blooms into a net in mid-air facing straight up.")]
         [SerializeField, Min(0.5f)] private float maxShotRange = 8f;
+        [Tooltip("Initial speed of the shot along the launch direction. Overridden per-shot by RingFingerShotAimer's gesture-mapped speed when fired that way; only used as-is for the debug Space trigger.")]
         [SerializeField, Min(1f)] private float launchSpeed = 12f;
+        [Tooltip("Downward acceleration applied to the projectile every frame while flying, producing the ballistic arc.")]
         [SerializeField, Min(0f)] private float gravity = 9.81f;
+        [Tooltip("Radius of the sphere swept along the flight path each frame to detect collisions. Larger values make thin obstacles easier to hit but less precise.")]
         [SerializeField, Min(0.01f)] private float projectileHitRadius = 0.15f;
+        [Tooltip("Radius of the small decorative orb-web drawn around the projectile itself while it's in flight (separate from the larger net built on impact).")]
         [SerializeField, Min(0.1f)] private float projectileWebRadius = 0.38f;
+        [Tooltip("Maximum number of recent tip positions kept to draw the flight trail. Older points are dropped once this many have accumulated.")]
         [SerializeField, Min(4)] private int trajectoryPointCount = 20;
 
         [Header("Flight Trail")]
+        [Tooltip("Line width of the trail rendered behind the flying projectile.")]
         [SerializeField, Min(0.001f)] private float trailWidth = 0.018f;
+        [Tooltip("How much the trail sags downward at its midpoint, as a fraction of the arc, purely for visual effect (independent of the actual physics-driven arc).")]
         [SerializeField, Range(0f, 0.35f)] private float trailSag = 0.06f;
 
         [Header("Impact")]
@@ -36,32 +44,51 @@ namespace Dexter.Spider
         [SerializeField, Min(0.05f)] private float surfaceProbeMargin = 0.25f;
 
         [Header("Net Phase")]
+        [Tooltip("Radius the impact net expands to. Silk widths and droplet count are also scaled relative to this default (a smaller final net gets thinner silk and fewer droplets).")]
         [SerializeField, Min(0.1f)] private float defaultNetRadius = 0.6f;
+        [Tooltip("How long the net takes to grow from nothing to its full radius after impact.")]
         [SerializeField, Range(0.05f, 0.5f)] private float netExpandDuration = 0.18f;
+        [Tooltip("Number of straight radial threads running from the net's center to its outer frame, like spokes on a wheel.")]
         [SerializeField, Range(6, 28)] private int spokeCount = 18;
+        [Tooltip("Number of concentric capture-spiral rings woven between the radial spokes.")]
         [SerializeField, Range(3, 12)] private int ringCount = 8;
+        [Tooltip("Controls how rings are spaced from center to edge: below 1 bunches rings tighter near the center, above 1 spreads them tighter near the edge.")]
         [SerializeField, Range(0.2f, 1.2f)] private float ringSpacingPower = 0.55f;
+        [Tooltip("Random per-point jitter applied to each capture-spiral ring so it doesn't look like a perfectly smooth circle.")]
         [SerializeField, Range(0f, 0.12f)] private float ringJitter = 0.035f;
+        [Tooltip("How much the capture spiral bulges outward between rings, giving it a slightly organic, uneven silhouette instead of perfect concentric circles.")]
         [SerializeField, Range(0f, 0.35f)] private float spiralBulge = 0.14f;
+        [Tooltip("Number of line segments used to draw each curved section of the capture spiral. Higher is smoother but more expensive.")]
         [SerializeField, Range(4, 16)] private int curveSegments = 10;
+        [Tooltip("Number of extra thin auxiliary spiral turns drawn alongside the main capture spiral, for visual density.")]
         [SerializeField, Range(0, 4)] private int auxiliarySpiralTurns = 2;
 
         [Header("Silk Width")]
+        [Tooltip("Line width of the net's radial (spoke) threads.")]
         [SerializeField, Min(0.001f)] private float radialThreadWidth = 0.011f;
+        [Tooltip("Line width of the net's capture-spiral threads (the main rings prey stick to).")]
         [SerializeField, Min(0.001f)] private float captureThreadWidth = 0.0065f;
+        [Tooltip("Line width of the net's outer frame thread.")]
         [SerializeField, Min(0.001f)] private float frameThreadWidth = 0.01f;
+        [Tooltip("Line width of the thin auxiliary spiral threads.")]
         [SerializeField, Min(0.001f)] private float auxiliaryThreadWidth = 0.004f;
+        [Tooltip("Line width of the small decorative web drawn on the projectile itself while in flight.")]
         [SerializeField, Min(0.001f)] private float projectileThreadWidth = 0.014f;
 
         [Header("Wind")]
+        [Tooltip("How far strands sway sideways/vertically from wind, both on the projectile's in-flight web and the expanded impact net.")]
         [SerializeField, Range(0f, 0.08f)] private float windSwayAmplitude = 0.025f;
+        [Tooltip("How fast the wind sway oscillates.")]
         [SerializeField, Min(0f)] private float windSwayFrequency = 2.4f;
 
         [Header("Droplets")]
+        [Tooltip("Maximum number of dew-drop spheres scattered along the net's capture-spiral/auxiliary threads. Actual count is scaled down for smaller-than-default nets.")]
         [SerializeField, Range(0, 80)] private int dropletCount = 28;
+        [Tooltip("Base radius of each dew-drop sphere, before per-droplet random scale variation.")]
         [SerializeField, Range(0.002f, 0.02f)] private float dropletRadius = 0.006f;
 
         [Header("Lifetime")]
+        [Tooltip("How long the fully-expanded net stays visible before this shot's GameObject is destroyed.")]
         [SerializeField, Min(0f)] private float holdDuration = 2.5f;
 
         private Phase phase = Phase.Flying;
@@ -112,7 +139,11 @@ namespace Dexter.Spider
             public float Scale { get; }
         }
 
-        public void Launch(Vector3 launchOrigin, Vector3 launchDirection, Transform shooter = null)
+        /// <param name="speedOverride">
+        /// When set, replaces the serialized <see cref="launchSpeed"/> for this shot only. Lets callers
+        /// (e.g. a gesture-driven aimer) derive speed from input instead of always using a fixed value.
+        /// </param>
+        public void Launch(Vector3 launchOrigin, Vector3 launchDirection, Transform shooter = null, float? speedOverride = null)
         {
             origin = launchOrigin;
             shooterRoot = shooter;
@@ -126,7 +157,7 @@ namespace Dexter.Spider
 
             tipWorldPosition = origin;
             previousTipWorldPosition = origin;
-            tipVelocity = normalizedDirection * launchSpeed;
+            tipVelocity = normalizedDirection * Mathf.Max(0.01f, speedOverride ?? launchSpeed);
 
             trajectoryPoints.Clear();
             trajectoryPoints.Add(origin);
