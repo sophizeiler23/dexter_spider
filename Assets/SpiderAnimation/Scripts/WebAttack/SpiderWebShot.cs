@@ -383,9 +383,18 @@ namespace Dexter.Spider
                 trailWidth,
                 new Color(0.94f, 0.97f, 1f, 0.85f));
             trailRenderer.useWorldSpace = true;
+            // Assigning widthCurve replaces the flat curve ConfigureLineRenderer derived from
+            // startWidth/endWidth, so trailWidth must be re-applied via widthMultiplier afterwards —
+            // otherwise the curve's own (unscaled) keyframe values become the literal on-screen width.
             trailRenderer.widthCurve = BuildTrailWidthCurve();
+            trailRenderer.widthMultiplier = trailWidth;
         }
 
+        /// <summary>
+        /// Normalized (0-1) taper shape for the flight trail, thin at the tail and full width at the
+        /// head. Actual on-screen width is this curve scaled by <see cref="trailWidth"/> via
+        /// <see cref="LineRenderer.widthMultiplier"/>.
+        /// </summary>
         private static AnimationCurve BuildTrailWidthCurve()
         {
             return new AnimationCurve(
