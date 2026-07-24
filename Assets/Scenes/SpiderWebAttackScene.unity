@@ -532,6 +532,12 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 6e022b4d6e99395318ff5a73686461be, type: 3}
       insertIndex: -1
       addedObject: {fileID: 1600001012}
+    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 6e022b4d6e99395318ff5a73686461be, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1600001013}
+    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 6e022b4d6e99395318ff5a73686461be, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1600001014}
   m_SourcePrefab: {fileID: 100100000, guid: 6e022b4d6e99395318ff5a73686461be, type: 3}
 --- !u!1 &832575517
 GameObject:
@@ -1020,6 +1026,69 @@ MonoBehaviour:
   displayMode: 1
   pixelsPerNewton: 55
   maximumArrowPixels: 175
+--- !u!114 &1600001013
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1600001001}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7c36e1659ef7fc34a8f50e7c62214d59, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Dexter.Spider.RingFingerShotAimer
+  receiver: {fileID: 0}
+  legIK: {fileID: 0}
+  webAttack: {fileID: 0}
+  baselineDurationSeconds: 1.5
+  logGestureDebugInfo: 0
+  activationThreshold: 0.15
+  releaseThreshold: 0.08
+  minPeakMagnitude: 0.2
+  maxExtensionSeconds: 1.2
+  maxAzimuthDegrees: 60
+  invertAzimuth: 0
+  minPeakMagnitudeForMinSpeed: 0.2
+  maxPeakMagnitudeForMaxSpeed: 1.5
+  minLaunchSpeed: 6
+  maxLaunchSpeed: 16
+--- !u!114 &1600001014
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1600001001}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f3393a94eea04f02a52985ccf78473b4, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Dexter.Spider.RingFingerTrajectoryAimer
+  receiver: {fileID: 0}
+  legIK: {fileID: 0}
+  webAttack: {fileID: 0}
+  baselineDurationSeconds: 1.5
+  logGestureDebugInfo: 0
+  previewActivationThreshold: 0.08
+  previewReleaseThreshold: 0.05
+  minFireMagnitude: 0.15
+  maxAzimuthDegrees: 60
+  invertAzimuth: 0
+  minMagnitudeForMinSpeed: 0.2
+  maxMagnitudeForMaxSpeed: 1.5
+  minLaunchSpeed: 6
+  maxLaunchSpeed: 16
+  previewColor: {r: 0.85, g: 0.93, b: 1, a: 0.55}
+  lineWidth: 0.035
+  dashTileLength: 0.35
+  crossSize: 0.25
+  crossLineWidth: 0.04
+  simulationTimeStep: 0.02
+  maxSimulationSeconds: 3
+  hitMask:
+    serializedVersion: 2
+    m_Bits: 4294967295
 --- !u!1 &1700001001
 GameObject:
   m_ObjectHideFlags: 0

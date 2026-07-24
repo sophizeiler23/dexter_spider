@@ -19,15 +19,24 @@ namespace Dexter.Spider
             Finished
         }
 
+        // Shots are always spawned via `new GameObject().AddComponent<SpiderWebShot>()` rather than
+        // from a prefab (see SpiderWebAttack.Fire), so these serialized fields' Inspector values are
+        // never actually reachable/tunable at edit time — these constants ARE the real defaults.
+        // Aiming systems that need to mirror the exact ballistic arc (e.g. a trajectory preview)
+        // should read these instead of duplicating magic numbers that could silently drift out of sync.
+        public const float DefaultGravity = 9.81f;
+        public const float DefaultMaxShotRange = 8f;
+        public const float DefaultProjectileHitRadius = 0.15f;
+
         [Header("Projectile")]
         [Tooltip("Maximum travel distance from the launch point. If nothing is hit before this, the shot stops and blooms into a net in mid-air facing straight up.")]
-        [SerializeField, Min(0.5f)] private float maxShotRange = 8f;
-        [Tooltip("Initial speed of the shot along the launch direction. Overridden per-shot by RingFingerShotAimer's gesture-mapped speed when fired that way; only used as-is for the debug Space trigger.")]
+        [SerializeField, Min(0.5f)] private float maxShotRange = DefaultMaxShotRange;
+        [Tooltip("Initial speed of the shot along the launch direction. Overridden per-shot by the active aiming system's gesture-mapped speed when fired that way; only used as-is for the debug Space trigger.")]
         [SerializeField, Min(1f)] private float launchSpeed = 12f;
         [Tooltip("Downward acceleration applied to the projectile every frame while flying, producing the ballistic arc.")]
-        [SerializeField, Min(0f)] private float gravity = 9.81f;
+        [SerializeField, Min(0f)] private float gravity = DefaultGravity;
         [Tooltip("Radius of the sphere swept along the flight path each frame to detect collisions. Larger values make thin obstacles easier to hit but less precise.")]
-        [SerializeField, Min(0.01f)] private float projectileHitRadius = 0.15f;
+        [SerializeField, Min(0.01f)] private float projectileHitRadius = DefaultProjectileHitRadius;
         [Tooltip("Radius of the small decorative orb-web drawn around the projectile itself while it's in flight (separate from the larger net built on impact).")]
         [SerializeField, Min(0.1f)] private float projectileWebRadius = 0.38f;
         [Tooltip("Maximum number of recent tip positions kept to draw the flight trail. Older points are dropped once this many have accumulated.")]

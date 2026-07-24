@@ -9,8 +9,10 @@ namespace Dexter.Visualize
     /// actually drive gameplay (the leg IK's Index/Middle, the ring-finger web aimer's Ring), this
     /// shows the real post-processing signal those systems act on (baseline-subtracted, and for legs
     /// also temporally smoothed) rather than the raw relay value, so what you see matches what the
-    /// spider receives. Thumb/Pinky (and Ring with no aimer wired in) have no gameplay pipeline to
-    /// mirror, so they fall back to raw force with this overlay's own optional tare.
+    /// spider receives. For Ring, whichever <see cref="RingFingerAimerBase"/> currently matches
+    /// <see cref="SpiderWebAttack.AimingMode"/> is shown (both aiming systems can be attached at once,
+    /// but only one is ever "live"). Thumb/Pinky (and Ring with no aimer wired in) have no gameplay
+    /// pipeline to mirror, so they fall back to raw force with this overlay's own optional tare.
     /// </summary>
     [RequireComponent(typeof(DexterRelayUdpReceiver))]
     public sealed class DexterForceOverlay : MonoBehaviour
@@ -58,7 +60,8 @@ namespace Dexter.Visualize
         [SerializeField] private Key toggleKey = Key.Q;
         [SerializeField] private DexterRelayUdpReceiver receiver;
         [SerializeField] private DexterFrontLegIK frontLegIk;
-        [SerializeField] private RingFingerShotAimer ringFingerAimer;
+        [Tooltip("Ring-finger aiming systems to show Ring's live data for — whichever one currently matches SpiderWebAttack's Aiming Mode wins. Auto-resolved on Awake (all aimers on this object) if left empty.")]
+        [SerializeField] private RingFingerAimerBase[] ringFingerAimers;
         [SerializeField] private DisplayMode displayMode = DisplayMode.FullScreen;
         [SerializeField, Min(1f)] private float pixelsPerNewton = 55f;
         [SerializeField, Min(20f)] private float maximumArrowPixels = 175f;
@@ -89,8 +92,8 @@ namespace Dexter.Visualize
                 receiver = GetComponent<DexterRelayUdpReceiver>();
             if (frontLegIk == null)
                 frontLegIk = GetComponent<DexterFrontLegIK>();
-            if (ringFingerAimer == null)
-                ringFingerAimer = GetComponent<RingFingerShotAimer>();
+            if (ringFingerAimers == null || ringFingerAimers.Length == 0)
+                ringFingerAimers = GetComponents<RingFingerAimerBase>();
             circleTexture = CreateCircleTexture(32);
         }
 
@@ -347,7 +350,7 @@ namespace Dexter.Visualize
 
         /// <summary>
         /// Resolves the value to display for a given finger. For Index/Middle (whichever are actually
-        /// assigned as the leg IK's driving fingers) and Ring (when a <see cref="RingFingerShotAimer"/>
+        /// assigned as the leg IK's driving fingers) and Ring (when a <see cref="RingFingerAimerBase"/>
         /// is wired in), this is the real post-baseline signal that gameplay acts on ("live"). Every
         /// other finger has no gameplay pipeline, so it falls back to raw force with this overlay's
         /// own optional tare.
@@ -369,10 +372,14 @@ namespace Dexter.Visualize
                 return frontLegIk.IsReceiving;
             }
 
-            if (finger == DexterFinger.Ring && ringFingerAimer != null)
+            if (finger == DexterFinger.Ring)
             {
-                force = ringFingerAimer.ProcessedForce;
-                return ringFingerAimer.HasBaseline && receiver != null && receiver.HasRecentFrame;
+                RingFingerAimerBase activeAimer = ResolveActiveRingAimer();
+                if (activeAimer != null)
+                {
+                    force = activeAimer.ProcessedForce;
+                    return activeAimer.HasBaseline && receiver != null && receiver.HasRecentFrame;
+                }
             }
 
             isProcessed = false;
@@ -380,6 +387,25 @@ namespace Dexter.Visualize
             if (hasForce && hasBaseline)
                 force -= baseline[index];
             return hasForce;
+        }
+
+        /// <summary>
+        /// Picks the ring-finger aimer whose <see cref="RingFingerAimerBase.IsActive"/> currently
+        /// matches <see cref="SpiderWebAttack.AimingMode"/>. Falls back to the first wired aimer if,
+        /// for some reason (e.g. missing SpiderWebAttack reference), none report themselves active.
+        /// </summary>
+        private RingFingerAimerBase ResolveActiveRingAimer()
+        {
+            if (ringFingerAimers == null)
+                return null;
+
+            for (int i = 0; i < ringFingerAimers.Length; i++)
+            {
+                if (ringFingerAimers[i] != null && ringFingerAimers[i].IsActive)
+                    return ringFingerAimers[i];
+            }
+
+            return ringFingerAimers.Length > 0 ? ringFingerAimers[0] : null;
         }
 
         private bool TryGetForce(int index, out Vector2 force)

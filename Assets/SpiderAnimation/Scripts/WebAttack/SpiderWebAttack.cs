@@ -4,15 +4,42 @@ using UnityEngine.InputSystem;
 namespace Dexter.Spider
 {
     /// <summary>
-    /// Fires web shots from the spider's front. The primary trigger is a ring-finger extension
-    /// gesture (see <see cref="RingFingerShotAimer"/>), which supplies an azimuth and launch speed
-    /// via <see cref="FireWebShot(float, float)"/>. Space is kept as a debug-only fallback that
-    /// always fires a flat, straight-ahead shot at the default speed so the attack can be tested
-    /// without any Dexter hardware connected.
+    /// Fires web shots from the spider's front. The primary trigger is one of the ring-finger
+    /// aiming systems below <see cref="AimingMode"/> (see <see cref="RingFingerShotAimer"/> and
+    /// <see cref="RingFingerTrajectoryAimer"/>), which supply an azimuth and launch speed via
+    /// <see cref="FireWebShot(float, float)"/>. Space is kept as a debug-only fallback that always
+    /// fires a flat, straight-ahead shot at the default speed so the attack can be tested without
+    /// any Dexter hardware connected, regardless of which aiming system is currently selected.
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class SpiderWebAttack : MonoBehaviour
     {
+        /// <summary>
+        /// Which ring-finger aiming system currently drives this attack. Both aimer components can
+        /// stay attached at the same time — only the one matching this mode will act on finger input
+        /// (see <see cref="RingFingerAimerBase.IsActive"/>), so switching here is enough to A/B them
+        /// without adding/removing components.
+        /// </summary>
+        public enum WebAimingMode
+        {
+            /// <summary>A short finger extension-then-return "flick"; the peak vector during the
+            /// extension sets azimuth/speed and the shot fires the instant the finger returns to
+            /// baseline. See <see cref="RingFingerShotAimer"/>.</summary>
+            PeakGesture,
+            /// <summary>Aim continuously while the finger stays extended past a small threshold — a
+            /// live dotted trajectory preview follows the current vector — and the shot fires using
+            /// the last-aimed vector the instant the finger releases. See
+            /// <see cref="RingFingerTrajectoryAimer"/>.</summary>
+            TrajectoryPreview
+        }
+
+        [Header("Aiming System")]
+        [Tooltip("Which ring-finger aiming system currently drives shots. Change freely at edit time or at runtime to compare feel — both aimer components can stay attached; only the matching one will act.")]
+        [SerializeField] private WebAimingMode aimingMode = WebAimingMode.PeakGesture;
+
+        /// <summary>The aiming system currently allowed to fire/preview through this attack.</summary>
+        public WebAimingMode AimingMode => aimingMode;
+
         [Tooltip("Transform the shot launches from. If left empty, falls back to the bone named 'Body Bone Name' below, or this object's own transform if that bone isn't found.")]
         [SerializeField] private Transform launchAnchor;
         [Tooltip("Currently unused by aiming (azimuth/elevation are computed from this object's own forward direction instead) — reserved for a future aim reference. If left empty, falls back the same way as 'Launch Anchor'.")]
@@ -88,18 +115,34 @@ namespace Dexter.Spider
 
         private void Fire(float azimuthDegrees, float elevationDegrees, float? speedOverride)
         {
-            ResolveReferences();
-
-            Transform anchor = resolvedLaunchAnchor != null ? resolvedLaunchAnchor : transform;
-            Vector3 direction = ResolveAimDirection(azimuthDegrees, elevationDegrees);
-
-            Vector3 origin = anchor.position
-                + Vector3.up * launchHeight
-                + direction * launchForwardOffset;
+            Vector3 origin = ComputeLaunchOrigin(azimuthDegrees, elevationDegrees, out Vector3 direction);
 
             GameObject shotObject = new("SpiderWebShot");
             SpiderWebShot shot = shotObject.AddComponent<SpiderWebShot>();
             shot.Launch(origin, direction, transform, speedOverride);
+        }
+
+        /// <summary>
+        /// Computes the exact launch origin/direction a shot fired with the given azimuth would use,
+        /// at the fixed <see cref="gestureLaunchElevationDegrees"/>. Lets an aiming system (e.g. a
+        /// trajectory preview) mirror the real shot's starting pose without duplicating the anchor
+        /// resolution logic in <see cref="Fire"/>.
+        /// </summary>
+        public Vector3 ComputeLaunchPose(float azimuthDegrees, out Vector3 direction)
+        {
+            return ComputeLaunchOrigin(azimuthDegrees, gestureLaunchElevationDegrees, out direction);
+        }
+
+        private Vector3 ComputeLaunchOrigin(float azimuthDegrees, float elevationDegrees, out Vector3 direction)
+        {
+            ResolveReferences();
+
+            Transform anchor = resolvedLaunchAnchor != null ? resolvedLaunchAnchor : transform;
+            direction = ResolveAimDirection(azimuthDegrees, elevationDegrees);
+
+            return anchor.position
+                + Vector3.up * launchHeight
+                + direction * launchForwardOffset;
         }
 
         private void ResolveReferences()

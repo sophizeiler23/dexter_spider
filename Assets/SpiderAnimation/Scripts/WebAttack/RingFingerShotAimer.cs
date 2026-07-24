@@ -1,4 +1,3 @@
-using Dexter.Visualize;
 using UnityEngine;
 
 namespace Dexter.Spider
@@ -11,9 +10,12 @@ namespace Dexter.Spider
     /// - Azimuth (left/right aim off the spider's forward) = angle of the peak vector from the Y axis.
     /// - Elevation is fixed on <see cref="SpiderWebAttack"/>, independent of finger input.
     /// - Launch speed = a range mapped from the peak vector's magnitude (its "norm").
+    /// Only acts while <see cref="SpiderWebAttack.AimingMode"/> is <see cref="SpiderWebAttack.WebAimingMode.PeakGesture"/>
+    /// (see <see cref="RingFingerAimerBase.IsActive"/>); otherwise sits idle so it can be left attached
+    /// alongside <see cref="RingFingerTrajectoryAimer"/> and switched between via that single setting.
     /// </summary>
     [DisallowMultipleComponent]
-    public sealed class RingFingerShotAimer : MonoBehaviour
+    public sealed class RingFingerShotAimer : RingFingerAimerBase
     {
         private enum GestureState
         {
@@ -21,18 +23,6 @@ namespace Dexter.Spider
             Tracking,
             CancelledAwaitingRelease
         }
-
-        [Header("References")]
-        [Tooltip("Relay receiver to read the ring finger's raw (x, y) from. Auto-resolved on enable (this object, its parent, then the whole scene) if left empty.")]
-        [SerializeField] private DexterRelayUdpReceiver receiver;
-        [Tooltip("Leg IK component whose 'Enable Calibration Phase' checkbox gates whether this component auto-tares its own baseline on enable. Auto-resolved on enable if left empty.")]
-        [SerializeField] private DexterFrontLegIK legIK;
-        [Tooltip("Web attack component to fire through once a gesture completes. Auto-resolved on enable if left empty.")]
-        [SerializeField] private SpiderWebAttack webAttack;
-
-        [Header("Baseline")]
-        [Tooltip("How long to sample the ring finger's rest position before gesture detection begins. Skipped entirely (baseline = 0) while the leg IK's calibration phase is disabled.")]
-        [SerializeField, Min(0.1f)] private float baselineDurationSeconds = 1.5f;
 
         [Header("Gesture Thresholds")]
         [Tooltip("Relative Y the ring finger must rise above (from baseline) to start tracking an extension.")]
@@ -60,30 +50,11 @@ namespace Dexter.Spider
         [Tooltip("Launch speed used for a gesture whose peak magnitude reaches 'Max Peak Magnitude For Max Speed' or beyond.")]
         [SerializeField, Min(0f)] private float maxLaunchSpeed = 16f;
 
-        [Header("Debug")]
-        [Tooltip("Logs baseline taring, gesture cancellations, filtered gestures, and fired shots.")]
-        [SerializeField] private bool logGestureDebugInfo;
-
         private GestureState state = GestureState.Idle;
         private Vector2 peak;
         private float trackingElapsed;
 
-        private Vector2 ringBaseline;
-        private bool hasBaseline;
-        private bool isTaring;
-
-        /// <summary>True once the ring finger's rest baseline has been established (or was skipped because calibration is disabled).</summary>
-        public bool HasBaseline => hasBaseline;
-        /// <summary>
-        /// Ring finger force after baseline subtraction — the exact signal the gesture state machine
-        /// acts on, as opposed to the raw value coming straight off the relay.
-        /// </summary>
-        public Vector2 ProcessedForce { get; private set; }
-
-        private Vector2 baselineSum;
-        private int baselineSamples;
-        private float tareStartRealtime = -1f;
-        private long lastTareSequence = long.MinValue;
+        protected override SpiderWebAttack.WebAimingMode RequiredMode => SpiderWebAttack.WebAimingMode.PeakGesture;
 
         private void OnValidate()
         {
@@ -91,121 +62,16 @@ namespace Dexter.Spider
             maxPeakMagnitudeForMaxSpeed = Mathf.Max(maxPeakMagnitudeForMaxSpeed, minPeakMagnitudeForMinSpeed + 0.01f);
         }
 
-        private void OnEnable()
+        protected override void OnInactive()
         {
-            ResolveReferences();
-
-            if (ShouldAutoTareBaseline())
-            {
-                BeginTare();
-            }
-            else
-            {
-                ringBaseline = Vector2.zero;
-                hasBaseline = true;
-                isTaring = false;
-            }
-        }
-
-        private void ResolveReferences()
-        {
-            if (receiver == null)
-                receiver = GetComponent<DexterRelayUdpReceiver>();
-            if (receiver == null)
-                receiver = GetComponentInParent<DexterRelayUdpReceiver>();
-            if (receiver == null)
-                receiver = FindAnyObjectByType<DexterRelayUdpReceiver>();
-
-            if (legIK == null)
-                legIK = GetComponent<DexterFrontLegIK>();
-            if (legIK == null)
-                legIK = GetComponentInParent<DexterFrontLegIK>();
-            if (legIK == null)
-                legIK = FindAnyObjectByType<DexterFrontLegIK>();
-
-            if (webAttack == null)
-                webAttack = GetComponent<SpiderWebAttack>();
-            if (webAttack == null)
-                webAttack = GetComponentInParent<SpiderWebAttack>();
-            if (webAttack == null)
-                webAttack = FindAnyObjectByType<SpiderWebAttack>();
-        }
-
-        private bool ShouldAutoTareBaseline()
-        {
-            return legIK == null || legIK.IsCalibrationPhaseEnabled;
-        }
-
-        [ContextMenu("Tare Ring Finger")]
-        public void BeginTare()
-        {
-            baselineSum = Vector2.zero;
-            baselineSamples = 0;
-            tareStartRealtime = -1f;
-            lastTareSequence = long.MinValue;
-            isTaring = true;
-            hasBaseline = false;
+            // Switching away mid-gesture shouldn't leave a stale partial extension armed for when
+            // this mode becomes active again.
             state = GestureState.Idle;
-            ProcessedForce = Vector2.zero;
         }
 
-        private void Update()
+        protected override void OnActiveUpdate(Vector2 relative)
         {
-            UpdateBaselineTare();
-
-            if (!hasBaseline || receiver == null || webAttack == null)
-                return;
-
-            if (!TryReadRingForce(out Vector2 raw))
-                return;
-
-            ProcessedForce = raw - ringBaseline;
-            UpdateGesture(ProcessedForce);
-        }
-
-        private bool TryReadRingForce(out Vector2 force)
-        {
-            force = Vector2.zero;
-            DexterFingerMeasurement measurement = receiver.GetFinger(DexterFinger.Ring);
-            if (measurement == null || !measurement.has_data || measurement.force == null || measurement.force.Length < 2)
-                return false;
-
-            force = new Vector2(measurement.force[0], measurement.force[1]);
-            return true;
-        }
-
-        private void UpdateBaselineTare()
-        {
-            if (!isTaring)
-                return;
-
-            DexterForceFrame frame = receiver != null ? receiver.LatestFrame : null;
-            if (frame == null || frame.sequence == lastTareSequence)
-                return;
-
-            if (!TryReadRingForce(out Vector2 force))
-                return;
-
-            lastTareSequence = frame.sequence;
-            baselineSum += force;
-            baselineSamples++;
-
-            if (tareStartRealtime < 0f)
-                tareStartRealtime = Time.realtimeSinceStartup;
-            if (Time.realtimeSinceStartup - tareStartRealtime < baselineDurationSeconds)
-                return;
-
-            ringBaseline = baselineSamples > 0 ? baselineSum / baselineSamples : Vector2.zero;
-            hasBaseline = true;
-            isTaring = false;
-
-            if (logGestureDebugInfo)
-            {
-                Debug.Log(
-                    $"{nameof(RingFingerShotAimer)}: ring baseline tared to " +
-                    $"({ringBaseline.x:F3}, {ringBaseline.y:F3}) over {baselineSamples} samples.",
-                    this);
-            }
+            UpdateGesture(relative);
         }
 
         private void UpdateGesture(Vector2 relative)
@@ -233,7 +99,7 @@ namespace Dexter.Spider
                     }
                     else if (trackingElapsed >= maxExtensionSeconds)
                     {
-                        if (logGestureDebugInfo)
+                        if (LogGestureDebugInfo)
                         {
                             Debug.Log(
                                 $"{nameof(RingFingerShotAimer)}: gesture cancelled, held extended for " +
@@ -256,7 +122,7 @@ namespace Dexter.Spider
             float magnitude = peak.magnitude;
             if (magnitude < minPeakMagnitude)
             {
-                if (logGestureDebugInfo)
+                if (LogGestureDebugInfo)
                 {
                     Debug.Log(
                         $"{nameof(RingFingerShotAimer)}: gesture filtered, peak magnitude {magnitude:F3} " +
@@ -274,7 +140,7 @@ namespace Dexter.Spider
             float speedT = Mathf.InverseLerp(minPeakMagnitudeForMinSpeed, maxPeakMagnitudeForMaxSpeed, magnitude);
             float launchSpeed = Mathf.Lerp(minLaunchSpeed, maxLaunchSpeed, Mathf.Clamp01(speedT));
 
-            if (logGestureDebugInfo)
+            if (LogGestureDebugInfo)
             {
                 Debug.Log(
                     $"{nameof(RingFingerShotAimer)}: firing shot. peak=({peak.x:F3}, {peak.y:F3}) " +
@@ -282,7 +148,7 @@ namespace Dexter.Spider
                     this);
             }
 
-            webAttack.FireWebShot(azimuthDegrees, launchSpeed);
+            WebAttack.FireWebShot(azimuthDegrees, launchSpeed);
         }
     }
 }
