@@ -24,14 +24,10 @@ namespace Dexter.Spider
         [Header("Automatic Orientation")]
         [Tooltip("How quickly the automatic behind/above frame follows changes in the spider and terrain. Lower values produce gentler ledge transitions.")]
         [SerializeField, Min(0.01f)] private float surfaceFrameResponse = 4f;
-        [Tooltip("How quickly the screen horizon settles toward world-up. The previous camera orientation is preserved while looking almost straight up or down, preventing flips.")]
-        [SerializeField, Min(0.01f)] private float cameraUpResponse = 6f;
         [Tooltip("Looks slightly ahead along the spider's path so the spider stays in the lower part of the frame and upcoming terrain remains visible.")]
         [SerializeField, Min(0f)] private float lookAheadDistance = 0.65f;
-        [Tooltip("Below this world-up projection the camera preserves its previous horizon instead of choosing an unstable new one.")]
-        [SerializeField, Range(0.01f, 0.95f)] private float verticalHorizonThreshold = 0.25f;
-        [Tooltip("Maximum roll correction used after leaving a near-vertical view. This returns an inverted view upright without snapping.")]
-        [SerializeField, Min(1f)] private float uprightRecoveryDegreesPerSecond = 240f;
+        [Tooltip("Keeps pitch away from the vertical singularity while guaranteeing zero camera roll.")]
+        [SerializeField, Range(80f, 89.9f)] private float maximumPitchDegrees = 89f;
 
         [Header("Terrain-Aware Framing")]
         [Tooltip("Uses the terrain surface frame to keep the camera behind and outside the wall on steep terrain.")]
@@ -65,7 +61,8 @@ namespace Dexter.Spider
         private bool hasLastTargetPosition;
         private Vector3 followForward = Vector3.forward;
         private Vector3 followUp = Vector3.up;
-        private Vector3 cameraUp = Vector3.up;
+        private float cameraYawDegrees;
+        private bool hasCameraYaw;
         private float followSteepness;
         private bool hasFollowFrame;
 
@@ -74,6 +71,8 @@ namespace Dexter.Spider
             positionVelocity = Vector3.zero;
             zoomVelocity = 0f;
             currentZoomDistance = 0f;
+            cameraYawDegrees = transform.eulerAngles.y;
+            hasCameraYaw = true;
             hasLastTargetPosition = target != null;
             if (target != null)
             {
@@ -139,11 +138,7 @@ namespace Dexter.Spider
                 return;
 
             Vector3 viewForward = lookDirection.normalized;
-            Vector3 stableCameraUp = GetStableCameraUp(
-                viewForward, Time.deltaTime);
-
-            Quaternion desiredRotation = Quaternion.LookRotation(
-                viewForward, stableCameraUp);
+            Quaternion desiredRotation = GetPitchYawRotation(viewForward);
             // The target must remain in frame even when the rear surface frame
             // changes rapidly at a ledge. Position and zoom remain smoothed;
             // aim directly at the spider so rotational lag cannot look at the
@@ -188,7 +183,6 @@ namespace Dexter.Spider
             followUp = desiredUp;
             followForward = desiredForward;
             followSteepness = desiredSteepness;
-            cameraUp = Vector3.up;
             hasFollowFrame = true;
         }
 
@@ -209,7 +203,6 @@ namespace Dexter.Spider
                 followUp = desiredUp;
                 followForward = desiredForward;
                 followSteepness = desiredSteepness;
-                cameraUp = Vector3.up;
                 hasFollowFrame = true;
                 return;
             }
@@ -238,76 +231,35 @@ namespace Dexter.Spider
                 followSteepness, desiredSteepness, blend);
         }
 
-        private Vector3 GetStableCameraUp(
-            Vector3 viewForward,
-            float deltaTime)
+        private Quaternion GetPitchYawRotation(Vector3 viewForward)
         {
-            // Parallel-transport the previous screen-up onto the new view
-            // plane. This retains a continuous horizon through vertical views,
-            // where LookRotation(viewForward, Vector3.up) is under-defined.
-            Vector3 transportedUp = Vector3.ProjectOnPlane(
-                cameraUp, viewForward);
-            if (transportedUp.sqrMagnitude < 0.0001f)
-                transportedUp = Vector3.ProjectOnPlane(
-                    transform.up, viewForward);
-            if (transportedUp.sqrMagnitude < 0.0001f)
-                transportedUp = Vector3.ProjectOnPlane(
-                    followUp, viewForward);
-            if (transportedUp.sqrMagnitude < 0.0001f)
-                transportedUp = Vector3.Cross(
-                    viewForward, transform.right);
-            transportedUp.Normalize();
-
-            Vector3 projectedWorldUp = Vector3.ProjectOnPlane(
-                Vector3.up, viewForward);
-            float worldUpStrength = projectedWorldUp.magnitude;
-            if (worldUpStrength <= verticalHorizonThreshold)
+            Vector3 normalizedForward = viewForward.normalized;
+            Vector3 planarForward = Vector3.ProjectOnPlane(
+                normalizedForward, Vector3.up);
+            if (planarForward.sqrMagnitude > 0.000001f)
             {
-                // World-up has no reliable screen projection while looking
-                // almost exactly vertical. Preserve the transported horizon
-                // only inside this temporary dead zone.
-                cameraUp = transportedUp;
-                return cameraUp;
+                planarForward.Normalize();
+                cameraYawDegrees = Mathf.Atan2(
+                    planarForward.x,
+                    planarForward.z) * Mathf.Rad2Deg;
+                hasCameraYaw = true;
+            }
+            else if (!hasCameraYaw)
+            {
+                cameraYawDegrees = transform.eulerAngles.y;
+                hasCameraYaw = true;
             }
 
-            // Outside the dead zone there is one canonical upright horizon.
-            // Never reverse it to agree with an inverted previous frame: that
-            // old hemisphere-preservation is what made a trip through the
-            // trough leave the camera permanently upside down.
-            projectedWorldUp /= worldUpStrength;
-            float reanchorWeight = Mathf.SmoothStep(
-                0f,
-                1f,
-                Mathf.InverseLerp(
-                    verticalHorizonThreshold,
-                    Mathf.Min(1f, verticalHorizonThreshold + 0.25f),
-                    worldUpStrength));
-            float signedCorrection = Vector3.SignedAngle(
-                transportedUp, projectedWorldUp, viewForward);
-            if (Vector3.Dot(transportedUp, projectedWorldUp) < -0.9999f)
-            {
-                // The two 180-degree recovery routes are equivalent. Choose
-                // one consistently instead of allowing numerical noise to
-                // alternate the direction from frame to frame.
-                signedCorrection = 180f;
-            }
-
-            float responseBlend = 1f - Mathf.Exp(
-                -cameraUpResponse * Mathf.Max(0f, deltaTime));
-            float maximumCorrection = uprightRecoveryDegreesPerSecond *
-                                      Mathf.Max(0f, deltaTime) *
-                                      reanchorWeight;
-            float correction = Mathf.Clamp(
-                signedCorrection * responseBlend * reanchorWeight,
-                -maximumCorrection,
-                maximumCorrection);
-            cameraUp = Quaternion.AngleAxis(
-                correction, viewForward) * transportedUp;
-            cameraUp = Vector3.ProjectOnPlane(
-                cameraUp, viewForward).normalized;
-            return cameraUp.sqrMagnitude > 0.0001f
-                ? cameraUp
-                : transportedUp;
+            float pitchDegrees = -Mathf.Asin(Mathf.Clamp(
+                normalizedForward.y, -1f, 1f)) * Mathf.Rad2Deg;
+            pitchDegrees = Mathf.Clamp(
+                pitchDegrees,
+                -maximumPitchDegrees,
+                maximumPitchDegrees);
+            return Quaternion.Euler(
+                pitchDegrees,
+                cameraYawDegrees,
+                0f);
         }
 
         private Vector3 GetTargetSurfaceForward(Vector3 surfaceUp)
@@ -565,11 +517,7 @@ namespace Dexter.Spider
             if (lookDirection.sqrMagnitude > 0.0001f)
             {
                 Vector3 viewForward = lookDirection.normalized;
-                cameraUp = Vector3.up;
-                Vector3 stableCameraUp = GetStableCameraUp(
-                    viewForward, 1f);
-                transform.rotation = Quaternion.LookRotation(
-                    viewForward, stableCameraUp);
+                transform.rotation = GetPitchYawRotation(viewForward);
             }
         }
     }

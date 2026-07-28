@@ -30,8 +30,36 @@ namespace Dexter.Spider
         [SerializeField] private bool calibrateDexterMovementOnStart = true;
         [Tooltip("Safety floor for a learned Dexter reference so an accidental no-input calibration cannot amplify sensor noise.")]
         [SerializeField, Min(0.01f)] private float minimumDexterCalibrationForce = 0.1f;
-        [Tooltip("Physical Dexter force needed for maximum walking and turning speed, as a multiple of the learned normal force. Lower values are more sensitive.")]
+        [Tooltip("Minimum 10th-to-90th percentile force range along each learned walking axis. Calibration repeats when either finger did not actually wiggle.")]
+        [SerializeField, Min(0.01f)] private float minimumCalibrationWiggleRange = 0.08f;
+        [Tooltip("Learns the natural diagonal angle of each finger's calibration wiggle and treats that direction as pure forward/back input. This removes coupled X force from walking without removing deliberate sideways turning.")]
+        [SerializeField] private bool alignWalkingAxisFromCalibration = true;
+        [Tooltip("Safety limit for how far calibration may rotate a finger's forward axis away from device Y.")]
+        [SerializeField, Range(0f, 80f)] private float maximumWalkingAxisCorrectionDegrees = 60f;
+        [Tooltip("After axis alignment, removes the remaining lateral X component from force that is clearly inside the forward/back walking corridor. Set to 1 for a perfectly straight displayed walking vector.")]
+        [SerializeField, Range(0f, 1f)] private float calibratedWalkingLateralSuppression = 1f;
+        [Tooltip("Largest remaining |X|/|Y| ratio treated as walking and snapped onto Y. X-dominant two-finger gestures remain available for turning.")]
+        [SerializeField, Range(0.1f, 0.75f)] private float calibratedWalkingCorridorRatio = 0.55f;
+        [Tooltip("Physical Dexter force that reaches the high-speed walking point, as a multiple of the learned normal walking force.")]
         [SerializeField, Range(1.05f, 6f)] private float dexterMaximumSpeedForceMultiplier = 1.2f;
+        [Tooltip("Walking-speed multiplier reached at the Dexter high-speed force point. This is separate from the iPad speed range.")]
+        [SerializeField, Range(1f, 24f)] private float dexterHighForceWalkingSpeedMultiplier = 19.5f;
+        [Tooltip("Absolute walking-speed multiplier at the calibrated normal-force reference.")]
+        [SerializeField, Range(0.1f, 6f)] private float dexterBaselineWalkingSpeedMultiplier = 3f;
+        [Tooltip("Walking-speed multiplier at very light Dexter force. The calibrated reference itself is always 1x.")]
+        [SerializeField, Range(0.1f, 1f)] private float dexterMinimumWalkingSpeedMultiplier = 0.5f;
+        [Tooltip("How long the calibrated speed-force envelope takes to release between alternating finger presses. Force increases remain immediate so short alternating presses retain their full strength; body acceleration is smoothed separately.")]
+        [SerializeField, Range(0.05f, 0.6f)] private float dexterSpeedForceReleaseSeconds = 0.50f;
+        [Tooltip("Maximum acceleration-response scale for physical Dexter walking. This prevents the 19.5x speed command from also multiplying acceleration by 19.5.")]
+        [SerializeField, Range(0.5f, 6f)] private float dexterWalkingAccelerationResponseScale = 2.25f;
+        [Tooltip("Braking-response scale for physical Dexter walking. Lower values produce a softer transition back to rest.")]
+        [SerializeField, Range(0.5f, 6f)] private float dexterWalkingBrakingResponseScale = 0.75f;
+        [Tooltip("Visible stride at the learned normal Dexter walking force. Increasing this makes each planted step carry the spider farther without increasing foot cadence.")]
+        [SerializeField, Min(0.05f)] private float dexterBaselineStrideLength = 0.45f;
+        [Tooltip("Visible stride at the Dexter high-speed force point. Keep this within the rig's reachable fore/aft range.")]
+        [SerializeField, Min(0.05f)] private float dexterHighForceStrideLength = 1.50f;
+        [Tooltip("Maximum Dexter gait cycles per second. Extra force above this cadence is expressed as a longer stride instead of faster, jittery foot cycling.")]
+        [SerializeField, Range(0.5f, 8f)] private float dexterMaximumGaitCyclesPerSecond = 4f;
         [Tooltip("Maximum sensitivity boost applied to very light physical Dexter index/middle input. The boost tapers to 1 at maximum-speed force so small movements stay responsive without compressing the high-force control range. iPad controls are unaffected.")]
         [SerializeField, Range(1f, 3f)] private float dexterFingerInputSensitivity = 1.75f;
 
@@ -107,7 +135,7 @@ namespace Dexter.Spider
         [Tooltip("Shortest accepted time between finger changes. Rejects one-frame dominance noise without making deliberate alternation feel delayed.")]
         [SerializeField, Min(0f)] private float minimumPressInterval = 0.08f;
         [Tooltip("Maximum time between opposite-finger presses for them to count as one walking alternation.")]
-        [SerializeField, Min(0.05f)] private float maximumAlternationInterval = 0.9f;
+        [SerializeField, Min(0.05f)] private float maximumAlternationInterval = 0.6f;
         [Tooltip("How long a confirmed left/right alternation keeps the force-driven gait active. Each new valid alternation refreshes this window.")]
         [SerializeField, Min(0.1f)] private float alternatingDriveSustainTime = 0.9f;
         [Tooltip("Time used to smooth each discrete forward movement.")]
@@ -185,22 +213,44 @@ namespace Dexter.Spider
         [SerializeField, Min(0f)] private float airborneRearLegStretch = 0.80f;
         [Tooltip("Brief lockout after landing before a new thumb press may jump.")]
         [SerializeField, Min(0f)] private float jumpCooldown = 0.20f;
+        [Tooltip("Thumb must remain released for this long after landing before another jump can arm.")]
+        [SerializeField, Min(0f)] private float jumpRearmReleaseHoldSeconds = 0.18f;
 
         [Header("Two-Finger Turning")]
         [Tooltip("Physical Dexter-only sensitivity for turn activation and speed range. Higher values require less X force without changing iPad turning.")]
         [SerializeField, Range(1f, 3f)] private float dexterTurningSensitivity = 1.5f;
+        [Tooltip("Dexter X force, as a multiple of the learned walking reference, that reaches maximum turn speed. A wider range prevents immediate full-speed turning.")]
+        [SerializeField, Range(1.5f, 8f)] private float dexterTurnMaximumSpeedReferenceMultiplier = 4f;
         [Tooltip("Minimum post-scaled X input on both fingers before an iPad turn registers.")]
         [SerializeField, Min(0f)] private float turnActivationForce = 1f;
         [Tooltip("X must be at least this fraction of Y on both fingers. This prevents a mostly vertical walking gesture from being mistaken for a turn.")]
-        [SerializeField, Range(0f, 1f)] private float turnAxisDominanceRatio = 0.45f;
+        [SerializeField, Range(0f, 1f)] private float turnAxisDominanceRatio = 0.30f;
+        [Tooltip("Same-direction X must remain deliberate for this long before it owns locomotion.")]
+        [SerializeField, Min(0f)] private float turnIntentHoldSeconds = 0.09f;
+        [Tooltip("How long coherent constant X must persist before it may take control directly from a recently established walking rhythm.")]
+        [SerializeField, Min(0f)] private float turnWalkingTakeoverSeconds = 0.09f;
+        [Tooltip("Maximum relative change allowed while X is proving that it is a constant turn gesture. Alternating X pulses restart the hold timer.")]
+        [SerializeField, Range(0.05f, 1f)] private float turnConstantForceTolerance = 0.45f;
+        [Tooltip("A recently completed Y alternation takes priority over mechanically coupled X force.")]
+        [SerializeField, Min(0f)] private float walkingPriorityAfterAlternation = 0.65f;
+        [Tooltip("Continuous opposite changes in the two Y channels must persist this long to confirm walking intent. This recognizes alternation even when neither finger fully releases.")]
+        [SerializeField, Min(0.02f)] private float walkingIntentConfirmationSeconds = 0.10f;
+        [Tooltip("Smallest per-frame Y change used by the walking-intent detector, expressed as a fraction of the calibrated walking force.")]
+        [SerializeField, Range(0.001f, 0.1f)] private float walkingIntentDeltaFraction = 0.01f;
+        [Tooltip("How long an established multi-handoff walking rhythm owns intent between successive finger exchanges.")]
+        [SerializeField, Range(0.6f, 1.5f)] private float establishedWalkingIntentHoldSeconds = 1.0f;
         [Tooltip("Post-scaled iPad X input at or below minimum turn speed.")]
         [SerializeField, Min(0.001f)] private float turnMinimumSpeedDisplacement = 5f;
         [Tooltip("Post-scaled iPad X input that reaches maximum turn speed.")]
         [SerializeField, Min(0.01f)] private float turnForceForMaximumSpeed = 25f;
-        [SerializeField, Min(0f)] private float minimumTurnDegreesPerSecond = 10f;
-        [SerializeField, Min(0f)] private float maximumTurnDegreesPerSecond = 45f;
+        [SerializeField, Min(0f)] private float minimumTurnDegreesPerSecond = 36f;
+        [SerializeField, Min(0f)] private float maximumTurnDegreesPerSecond = 228f;
         [Tooltip("How quickly rotation and the turning gait blend in and out.")]
-        [SerializeField, Min(0.01f)] private float turnResponseSpeed = 4f;
+        [SerializeField, Min(0.01f)] private float turnResponseSpeed = 6f;
+        [Tooltip("Maximum rate at which turning speed increases, in degrees per second squared.")]
+        [SerializeField, Min(1f)] private float turnAngularAcceleration = 360f;
+        [Tooltip("Maximum rate at which turning slows or reverses, in degrees per second squared.")]
+        [SerializeField, Min(1f)] private float turnAngularDeceleration = 540f;
         [Tooltip("Outside-leg stride relative to the normal stride.")]
         [SerializeField, Min(0f)] private float outsideTurnStrideMultiplier = 1.15f;
         [Tooltip("Inside-leg counter-stride relative to the normal stride.")]
@@ -217,6 +267,8 @@ namespace Dexter.Spider
         [SerializeField, Min(0.01f)] private float cornerRootPositionResponse = 2.5f;
         [Tooltip("Absolute root-speed limit while rounding a terrain corner. This prevents a discontinuous heightmap sample from teleporting the spider.")]
         [SerializeField, Min(0.01f)] private float cornerRootMaximumSpeed = 3f;
+        [Tooltip("Largest unresolved gap allowed between a sampled surface pose and the root pose before the climb anchor pauses. This prevents a high-speed command from advancing the virtual surface far ahead of the physical spider.")]
+        [SerializeField, Min(0.05f)] private float maximumSurfaceAnchorTrackingError = 0.85f;
         [Tooltip("Minimum time the root, torso, and feet share one surface-transition frame.")]
         [SerializeField, Min(0f)] private float minimumSurfaceTransitionDuration = 0.20f;
         [Tooltip("Maximum time a surface transition may remain active if terrain samples never fully settle.")]
@@ -257,6 +309,8 @@ namespace Dexter.Spider
         [SerializeField, Min(0f)] private float fingerMimicLiftHeight = 0.4f;
         [Tooltip("How quickly the side follows its finger up and down.")]
         [SerializeField, Min(0.01f)] private float fingerMimicResponse = 1.5f;
+        [Tooltip("The other finger must remain below this fraction of the active finger for the input to count as an isolated side lift.")]
+        [SerializeField, Range(0.05f, 0.75f)] private float singleFingerIsolationRatio = 0.35f;
         [Tooltip("Extra direct-finger lift applied to the front leg of each side.")]
         [SerializeField, Range(1f, 3f)] private float frontLegMimicLiftMultiplier = 1.6f;
         [Tooltip("How strongly lifting one side shifts the body's balance toward that side.")]
@@ -335,6 +389,8 @@ namespace Dexter.Spider
         private bool initialized;
         private Vector2 smoothedLeftForce;
         private Vector2 smoothedRightForce;
+        private float smoothedLeftDexterSpeedForce;
+        private float smoothedRightDexterSpeedForce;
         private float leftGaitPhase;
         private float rightGaitPhase;
         private float leftGaitWeight;
@@ -352,6 +408,15 @@ namespace Dexter.Spider
         private bool alternatingDriveAuthorized;
         private bool gaitDriveActive;
         private float lastCompletedAlternationTime = -1f;
+        private float lastAlternatingYIntentTime = -1f;
+        private float alternatingYIntentConfidence;
+        private float previousLeftYActivity;
+        private float previousRightYActivity;
+        private bool hasPreviousYActivity;
+        private int previousYDominantFinger;
+        private float lastYDominanceEventTime = -1f;
+        private float lastQualifiedYHandoffTime = -1f;
+        private float lastConfirmedWalkingPatternTime = -1f;
         private float lastLiveFingerInputTime = -1f;
         private float forwardSpeed;
         private int travelDirection = 1;
@@ -365,6 +430,9 @@ namespace Dexter.Spider
         private float turnGaitWeight;
         private float currentTurnSpeed;
         private float currentYawDegrees;
+        private int pendingTurnDirection;
+        private float pendingTurnStartedAt = -1f;
+        private float pendingTurnReferenceMagnitude;
         private float lastAppliedForwardDistance;
         private Vector3 locomotionWorldPosition;
         private bool hasLocomotionWorldPosition;
@@ -375,6 +443,7 @@ namespace Dexter.Spider
         private float turnRecoveryElapsed;
         private SpiderTerrainForces terrainForces;
         private SpiderEnvironmentForces environmentForces;
+        private SpiderRigidbodyDynamics rigidbodyDynamics;
         private float activeForceSpeedMultiplier = 1f;
         private float activeForceStrideLength = 0.17f;
         private float activeForceLiftMultiplier = 0.55f;
@@ -416,15 +485,20 @@ namespace Dexter.Spider
         private long lastTracedSequence = long.MinValue;
         private int unflushedTraceRows;
         private string traceFilePath;
-        private readonly List<float> dexterMovementCalibrationSamples =
-            new List<float>(1024);
+        private readonly List<Vector2> dexterLeftMovementCalibrationSamples =
+            new List<Vector2>(1024);
+        private readonly List<Vector2> dexterRightMovementCalibrationSamples =
+            new List<Vector2>(1024);
         private bool waitingForDexterMovementCalibration;
         private bool dexterCalibrationStartConfirmed;
         private bool isDexterMovementCalibrating;
         private bool dexterMovementCalibrationComplete;
+        private bool dexterCalibrationNeedsRetry;
         private float dexterMovementCalibrationStart = -1f;
         private float dexterCalibrationCompleteMessageUntil = -1f;
         private float calibratedDexterReferenceForce = 1f;
+        private Vector2 calibratedLeftWalkingAxis = Vector2.up;
+        private Vector2 calibratedRightWalkingAxis = Vector2.up;
         private long lastDexterMovementCalibrationSequence = long.MinValue;
         private bool isJumping;
         private bool jumpInputArmed;
@@ -445,18 +519,36 @@ namespace Dexter.Spider
         private Vector2 sampledJumpPeakDirection;
         private bool jumpPressQualified;
         private float lastJumpLandedAt = float.NegativeInfinity;
+        private float jumpReleaseBeganAt = -1f;
         private Vector3 jumpStartPosition;
         private Vector3 jumpLandingPosition;
         private Vector3 jumpForward = Vector3.forward;
         private Vector3 jumpUp = Vector3.up;
         private Quaternion jumpStartRotation = Quaternion.identity;
         private Quaternion jumpTargetRotation = Quaternion.identity;
+        private bool debugWalkingIntentActive;
+        private bool debugCoherentTurnCandidate;
+        private string debugInputIntent = "NEUTRAL";
+        private string debugTurnDecision = "No turn input";
 
         public bool IsReceiving => receiver != null && receiver.HasRecentFrame;
         public bool IsTaring => isTaring;
         public bool IsDexterMovementCalibrating =>
             isDexterMovementCalibrating;
         public float ForwardSpeed => forwardSpeed;
+        public float TurnInput => turnInput;
+        public float TurnSpeedDegreesPerSecond => currentTurnSpeed;
+        public Vector2 IndexForce => smoothedLeftForce;
+        public Vector2 MiddleForce => smoothedRightForce;
+        public Vector2 ThumbForce => currentThumbAppliedForce;
+        public float ActiveJumpForce => activeJumpForce;
+        public Vector3 JumpDirection => jumpForward;
+        public Vector3 JumpUp => jumpUp;
+        public Vector3 SupportNormal => traceSupportNormal;
+        public bool WalkingIntentActive => debugWalkingIntentActive;
+        public bool CoherentTurnCandidate => debugCoherentTurnCandidate;
+        public string InputIntentState => debugInputIntent;
+        public string TurnDecisionReason => debugTurnDecision;
         public bool IsJumping => isJumping;
         public string TraceFilePath => traceFilePath;
 
@@ -486,10 +578,12 @@ namespace Dexter.Spider
             dexterCalibrationStartConfirmed = false;
             isDexterMovementCalibrating = false;
             dexterMovementCalibrationComplete = false;
+            dexterCalibrationNeedsRetry = false;
             dexterMovementCalibrationStart = -1f;
             dexterCalibrationCompleteMessageUntil = -1f;
             lastDexterMovementCalibrationSequence = long.MinValue;
-            dexterMovementCalibrationSamples.Clear();
+            dexterLeftMovementCalibrationSamples.Clear();
+            dexterRightMovementCalibrationSamples.Clear();
             thumbJumpBaseline = Vector2.zero;
             thumbJumpCalibrationSamples.Clear();
             thumbNeutralCalibrationSamples.Clear();
@@ -498,6 +592,8 @@ namespace Dexter.Spider
             calibratedDexterReferenceForce = Mathf.Max(
                 minimumDexterCalibrationForce,
                 minimumSpeedDisplacement / 5f);
+            calibratedLeftWalkingAxis = Vector2.up;
+            calibratedRightWalkingAxis = Vector2.up;
         }
 
         private void UseUntaredRelayDefaults()
@@ -507,6 +603,7 @@ namespace Dexter.Spider
             alternatingDriveAuthorized = false;
             gaitDriveActive = false;
             lastCompletedAlternationTime = -1f;
+            ResetWalkingIntentDetection();
             lastLiveFingerInputTime = -1f;
             leftBaseline = Vector2.zero;
             rightBaseline = Vector2.zero;
@@ -656,12 +753,16 @@ namespace Dexter.Spider
                 GUI.Label(
                     new Rect(panel.x + 20f, panel.y + 10f,
                         panel.width - 40f, 42f),
-                    "DEXTER READY",
+                    dexterCalibrationNeedsRetry
+                        ? "CALIBRATION NEEDS MORE MOVEMENT"
+                        : "DEXTER READY",
                     titleStyle);
                 GUI.Label(
                     new Rect(panel.x + 30f, panel.y + 52f,
                         panel.width - 60f, 72f),
-                    "Place your hand in the device with thumb, index, and middle fingers positioned comfortably. Calibration will not begin until you are ready.",
+                    dexterCalibrationNeedsRetry
+                        ? "Index and Middle did not both produce a clear walking wiggle. Press Start, then alternate both fingers continuously until calibration completes."
+                        : "Place your hand in the device with thumb, index, and middle fingers positioned comfortably. Calibration will not begin until you are ready.",
                     messageStyle);
                 var buttonStyle = new GUIStyle(GUI.skin.button)
                 {
@@ -676,6 +777,7 @@ namespace Dexter.Spider
                         buttonStyle))
                 {
                     dexterCalibrationStartConfirmed = true;
+                    dexterCalibrationNeedsRetry = false;
                 }
             }
             else if (isDexterMovementCalibrating)
@@ -770,9 +872,9 @@ namespace Dexter.Spider
             row.Append("thumb_fx,thumb_fy,index_fx,index_fy,middle_fx,middle_fy,ring_fx,ring_fy,pinky_fx,pinky_fy,");
             row.Append("index_baseline_x,index_baseline_y,middle_baseline_x,middle_baseline_y,thumb_jump_baseline_x,thumb_jump_baseline_y,");
             row.Append("index_activation_threshold,middle_activation_threshold,index_release_threshold,middle_release_threshold,");
-            row.Append("calibrated_walking_reference_force,dexter_finger_input_sensitivity,index_scaled_smoothed_fx,index_scaled_smoothed_fy,middle_scaled_smoothed_fx,middle_scaled_smoothed_fy,");
+            row.Append("calibrated_walking_reference_force,dexter_finger_input_sensitivity,index_walking_axis_x,index_walking_axis_y,middle_walking_axis_x,middle_walking_axis_y,index_speed_force,middle_speed_force,active_force_speed_multiplier,active_force_stride_length,index_scaled_smoothed_fx,index_scaled_smoothed_fy,middle_scaled_smoothed_fx,middle_scaled_smoothed_fy,");
             row.Append("pressed_finger,last_active_finger,maximum_alternation_interval_s,input_drive_release_delay_s,travel_direction,forward_speed,target_forward_distance,current_forward_distance,");
-            row.Append("turn_input,turn_speed_deg_s,yaw_degrees,dexter_turning_sensitivity,turn_activation_force,turn_minimum_speed_force,turn_maximum_speed_force,turn_axis_dominance_ratio,");
+            row.Append("turn_input,turn_speed_deg_s,yaw_degrees,dexter_turning_sensitivity,turn_activation_force,turn_minimum_speed_force,turn_maximum_speed_force,turn_axis_dominance_ratio,walking_intent_active,coherent_turn_candidate,input_intent_state,turn_decision_reason,");
             row.Append("thumb_applied_fx,thumb_applied_fy,thumb_applied_magnitude,");
             row.Append("jump_input_armed,is_sampling_jump_force,jump_press_qualified,sampled_jump_peak_force,jump_sampling_elapsed_s,jump_activation_hold_s,jump_gate_state,jump_gate_reason,jump_activation_force,jump_base_activation_force,walking_input_force,walking_jump_activation_margin_per_n,walking_jump_activation_addition,jump_release_force,jump_release_activation_fraction,calibrated_jump_reference_force,calibrated_thumb_incidental_force,thumb_incidental_safety_multiplier,thumb_incidental_activation_floor,calibrated_jump_activation_fraction,strong_jump_delta_force,strong_jump_trigger_force,");
             row.Append("jump_id,jump_event,jump_event_name,is_jumping,jump_force,jump_progress,jump_distance,strong_jump,");
@@ -854,6 +956,12 @@ namespace Dexter.Spider
             AppendNumber(row, rightAdaptiveReleaseThreshold);
             AppendNumber(row, calibratedDexterReferenceForce);
             AppendNumber(row, dexterFingerInputSensitivity);
+            AppendVector2(row, calibratedLeftWalkingAxis);
+            AppendVector2(row, calibratedRightWalkingAxis);
+            AppendNumber(row, smoothedLeftDexterSpeedForce);
+            AppendNumber(row, smoothedRightDexterSpeedForce);
+            AppendNumber(row, activeForceSpeedMultiplier);
+            AppendNumber(row, activeForceStrideLength);
             AppendVector2(row, smoothedLeftForce);
             AppendVector2(row, smoothedRightForce);
             AppendInteger(row, pressedFinger);
@@ -872,6 +980,10 @@ namespace Dexter.Spider
             AppendNumber(row, GetActiveTurnMinimumSpeedDisplacement());
             AppendNumber(row, GetActiveTurnMaximumSpeedDisplacement());
             AppendNumber(row, turnAxisDominanceRatio);
+            AppendBoolean(row, debugWalkingIntentActive);
+            AppendBoolean(row, debugCoherentTurnCandidate);
+            AppendCsvText(row, debugInputIntent);
+            AppendCsvText(row, debugTurnDecision);
             AppendVector2(row, currentThumbAppliedForce);
             AppendNumber(row, currentThumbAppliedForce.magnitude);
             AppendBoolean(row, jumpInputArmed);
@@ -1088,6 +1200,8 @@ namespace Dexter.Spider
             hasBaseline = false;
             smoothedLeftForce = Vector2.zero;
             smoothedRightForce = Vector2.zero;
+            smoothedLeftDexterSpeedForce = 0f;
+            smoothedRightDexterSpeedForce = 0f;
             leftGaitPhase = 0f;
             rightGaitPhase = 0f;
             leftGaitWeight = 0f;
@@ -1105,6 +1219,7 @@ namespace Dexter.Spider
             alternatingDriveAuthorized = false;
             gaitDriveActive = false;
             lastCompletedAlternationTime = -1f;
+            ResetWalkingIntentDetection();
             lastLiveFingerInputTime = -1f;
             forwardSpeed = 0f;
             turnInput = 0f;
@@ -1199,11 +1314,37 @@ namespace Dexter.Spider
             ConfigureRowLanes(rightLegs);
 
             CaptureFixedTransforms();
+            ConfigureRigidbodyDynamics();
+            if (GetComponent<SpiderForceDebugOverlay>() == null)
+                gameObject.AddComponent<SpiderForceDebugOverlay>();
+            if (GetComponent<SpiderFollowingLight>() == null)
+                gameObject.AddComponent<SpiderFollowingLight>();
             initialized = true;
             Debug.Log(
                 $"{nameof(DexterFrontLegIK)} ready: {leftLegFinger} drives the left tetrapod gait, " +
                 $"{rightLegFinger} drives the right tetrapod gait.",
                 this);
+        }
+
+        private void ConfigureRigidbodyDynamics()
+        {
+            rigidbodyDynamics = GetComponent<SpiderRigidbodyDynamics>();
+            if (rigidbodyDynamics == null)
+                rigidbodyDynamics = gameObject.AddComponent<SpiderRigidbodyDynamics>();
+
+            var feet = new Transform[leftLegs.Length + rightLegs.Length];
+            for (int i = 0; i < leftLegs.Length; i++)
+            {
+                feet[i] = leftLegs[i].Effector;
+                feet[i + leftLegs.Length] = rightLegs[i].Effector;
+            }
+            rigidbodyDynamics.Initialize(feet, body);
+            rigidbodyDynamics.SetDesiredPose(
+                transform.position,
+                transform.rotation,
+                Vector3.up,
+                0f,
+                false);
         }
 
         private void DisableConflictingProceduralControllers()
@@ -1393,26 +1534,25 @@ namespace Dexter.Spider
                 dexterMovementCalibrationStart =
                     Time.realtimeSinceStartup;
                 lastDexterMovementCalibrationSequence = long.MinValue;
-                dexterMovementCalibrationSamples.Clear();
+                dexterLeftMovementCalibrationSamples.Clear();
+                dexterRightMovementCalibrationSamples.Clear();
                 ResetInputStateForMovementCalibration();
             }
 
             if (frame.sequence != lastDexterMovementCalibrationSequence)
             {
                 lastDexterMovementCalibrationSequence = frame.sequence;
-                float combinedY = 0f;
-                int fingerSampleCount = 0;
                 if (TryReadForce(
                         leftLegFinger, out Vector2 leftCalibrationForce))
                 {
-                    combinedY += Mathf.Abs(leftCalibrationForce.y);
-                    fingerSampleCount++;
+                    dexterLeftMovementCalibrationSamples.Add(
+                        leftCalibrationForce);
                 }
                 if (TryReadForce(
                         rightLegFinger, out Vector2 rightCalibrationForce))
                 {
-                    combinedY += Mathf.Abs(rightCalibrationForce.y);
-                    fingerSampleCount++;
+                    dexterRightMovementCalibrationSamples.Add(
+                        rightCalibrationForce);
                 }
                 if (TryReadForce(
                         jumpFinger, out Vector2 thumbCalibrationForce))
@@ -1430,13 +1570,8 @@ namespace Dexter.Spider
                             thumbCalibrationForce);
                 }
 
-                if (fingerSampleCount > 0)
-                {
-                    float meanFingerY = combinedY / fingerSampleCount;
-                    if (!float.IsNaN(meanFingerY) &&
-                        !float.IsInfinity(meanFingerY))
-                        dexterMovementCalibrationSamples.Add(meanFingerY);
-                }
+                // The per-finger samples are retained so calibration can
+                // separate the stable device preload from deliberate motion.
             }
 
             if (Time.realtimeSinceStartup -
@@ -1449,24 +1584,109 @@ namespace Dexter.Spider
 
         private void CompleteDexterMovementCalibration()
         {
-            CompleteThumbJumpCalibration();
-            if (dexterMovementCalibrationSamples.Count > 0)
+            Vector2 learnedLeftAxis = alignWalkingAxisFromCalibration
+                ? CalculateCalibrationWalkingAxis(
+                    dexterLeftMovementCalibrationSamples)
+                : Vector2.up;
+            Vector2 learnedRightAxis = alignWalkingAxisFromCalibration
+                ? CalculateCalibrationWalkingAxis(
+                    dexterRightMovementCalibrationSamples)
+                : Vector2.up;
+            learnedLeftAxis = LimitWalkingAxisCorrection(learnedLeftAxis);
+            learnedRightAxis = LimitWalkingAxisCorrection(learnedRightAxis);
+            float leftWiggleRange = CalculateCalibrationWiggleRange(
+                dexterLeftMovementCalibrationSamples, learnedLeftAxis);
+            float rightWiggleRange = CalculateCalibrationWiggleRange(
+                dexterRightMovementCalibrationSamples, learnedRightAxis);
+            if (leftWiggleRange < minimumCalibrationWiggleRange ||
+                rightWiggleRange < minimumCalibrationWiggleRange)
             {
+                isDexterMovementCalibrating = false;
+                dexterMovementCalibrationComplete = false;
+                waitingForDexterMovementCalibration = true;
+                dexterCalibrationStartConfirmed = false;
+                dexterCalibrationNeedsRetry = true;
+                dexterMovementCalibrationStart = -1f;
+                ResetInputStateForMovementCalibration();
+                Debug.LogWarning(
+                    $"{nameof(DexterFrontLegIK)} rejected Dexter " +
+                    $"calibration because walking motion was too small. " +
+                    $"Index walking-axis range={leftWiggleRange:F3} N, " +
+                    $"Middle walking-axis range={rightWiggleRange:F3} N; " +
+                    $"required={minimumCalibrationWiggleRange:F3} N.",
+                    this);
+                return;
+            }
+
+            CompleteThumbJumpCalibration();
+            leftBaseline = EstimateStableDexterBaseline(
+                dexterLeftMovementCalibrationSamples);
+            rightBaseline = EstimateStableDexterBaseline(
+                dexterRightMovementCalibrationSamples);
+            calibratedLeftWalkingAxis = learnedLeftAxis;
+            calibratedRightWalkingAxis = learnedRightAxis;
+            hasBaseline = dexterLeftMovementCalibrationSamples.Count > 0 ||
+                          dexterRightMovementCalibrationSamples.Count > 0;
+
+            var activeWalkingSamples = new List<float>(
+                dexterLeftMovementCalibrationSamples.Count +
+                dexterRightMovementCalibrationSamples.Count);
+            for (int i = 0;
+                 i < dexterLeftMovementCalibrationSamples.Count; i++)
+            {
+                activeWalkingSamples.Add(Mathf.Abs(
+                    AlignForceToWalkingAxis(
+                        dexterLeftMovementCalibrationSamples[i] -
+                        leftBaseline,
+                        calibratedLeftWalkingAxis).y));
+            }
+            for (int i = 0;
+                 i < dexterRightMovementCalibrationSamples.Count; i++)
+            {
+                activeWalkingSamples.Add(Mathf.Abs(
+                    AlignForceToWalkingAxis(
+                        dexterRightMovementCalibrationSamples[i] -
+                        rightBaseline,
+                        calibratedRightWalkingAxis).y));
+            }
+
+            if (activeWalkingSamples.Count > 0)
+            {
+                activeWalkingSamples.Sort();
+                // Use a mean of the active upper portion. This keeps the
+                // requested mean-style calibration while excluding the many
+                // released samples clustered around the learned preload.
+                int activeStart = Mathf.Clamp(
+                    Mathf.FloorToInt(activeWalkingSamples.Count * 0.60f),
+                    0, activeWalkingSamples.Count - 1);
                 float forceSum = 0f;
-                for (int i = 0;
-                     i < dexterMovementCalibrationSamples.Count;
-                     i++)
-                    forceSum += dexterMovementCalibrationSamples[i];
+                for (int i = activeStart;
+                     i < activeWalkingSamples.Count; i++)
+                    forceSum += activeWalkingSamples[i];
                 calibratedDexterReferenceForce = Mathf.Max(
                     minimumDexterCalibrationForce,
-                    forceSum / dexterMovementCalibrationSamples.Count);
+                    forceSum /
+                    Mathf.Max(1, activeWalkingSamples.Count - activeStart));
             }
             else
             {
                 calibratedDexterReferenceForce = Mathf.Max(
                     minimumDexterCalibrationForce,
-                    minimumSpeedDisplacement / 5f);
+                minimumSpeedDisplacement / 5f);
             }
+
+            float calibratedActivationThreshold = Mathf.Clamp(
+                calibratedDexterReferenceForce * 0.04f,
+                alternationForceThreshold,
+                maximumAdaptiveNoiseThreshold);
+            leftAdaptiveActivationThreshold = calibratedActivationThreshold;
+            rightAdaptiveActivationThreshold = calibratedActivationThreshold;
+            leftAdaptiveReleaseThreshold = Mathf.Max(
+                alternationReleaseThreshold,
+                leftAdaptiveActivationThreshold * 0.6f);
+            rightAdaptiveReleaseThreshold = Mathf.Max(
+                alternationReleaseThreshold,
+                rightAdaptiveActivationThreshold * 0.6f);
 
             isDexterMovementCalibrating = false;
             dexterMovementCalibrationComplete = true;
@@ -1477,6 +1697,13 @@ namespace Dexter.Spider
                 $"{nameof(DexterFrontLegIK)} active Dexter calibration " +
                 $"complete: normal walking force=" +
                 $"{calibratedDexterReferenceForce:F3}, " +
+                $"Index neutral=({leftBaseline.x:F3}, " +
+                $"{leftBaseline.y:F3}), Middle neutral=" +
+                $"({rightBaseline.x:F3}, {rightBaseline.y:F3}), " +
+                $"walking-axis correction Index=" +
+                $"{GetWalkingAxisCorrectionDegrees(calibratedLeftWalkingAxis):F1}°, " +
+                $"Middle=" +
+                $"{GetWalkingAxisCorrectionDegrees(calibratedRightWalkingAxis):F1}°, " +
                 $"maximum-speed force=" +
                 $"{GetActiveMaximumSpeedDisplacement():F3}, " +
                 $"thumb rest=({thumbJumpBaseline.x:F3}, " +
@@ -1485,6 +1712,115 @@ namespace Dexter.Spider
                 $"{calibratedThumbJumpReferenceForce:F3}, " +
                 $"2x threshold={GetStrongJumpTriggerForce():F3}.",
                 this);
+        }
+
+        private static float CalculateCalibrationWiggleRange(
+            List<Vector2> samples, Vector2 walkingAxis)
+        {
+            if (samples == null || samples.Count < 10)
+                return 0f;
+            var projectedValues = new List<float>(samples.Count);
+            for (int i = 0; i < samples.Count; i++)
+            {
+                float value = Vector2.Dot(samples[i], walkingAxis);
+                if (!float.IsNaN(value) && !float.IsInfinity(value))
+                    projectedValues.Add(value);
+            }
+            if (projectedValues.Count < 10)
+                return 0f;
+            projectedValues.Sort();
+            int lowIndex = Mathf.Clamp(
+                Mathf.FloorToInt((projectedValues.Count - 1) * 0.10f),
+                0, projectedValues.Count - 1);
+            int highIndex = Mathf.Clamp(
+                Mathf.CeilToInt((projectedValues.Count - 1) * 0.90f),
+                0, projectedValues.Count - 1);
+            return Mathf.Abs(
+                projectedValues[highIndex] - projectedValues[lowIndex]);
+        }
+
+        private static Vector2 CalculateCalibrationWalkingAxis(
+            List<Vector2> samples)
+        {
+            if (samples == null || samples.Count < 10)
+                return Vector2.up;
+
+            Vector2 mean = Vector2.zero;
+            int validSamples = 0;
+            for (int i = 0; i < samples.Count; i++)
+            {
+                Vector2 sample = samples[i];
+                if (!IsFinite(sample))
+                    continue;
+                mean += sample;
+                validSamples++;
+            }
+            if (validSamples < 10)
+                return Vector2.up;
+            mean /= validSamples;
+
+            float xx = 0f;
+            float xy = 0f;
+            float yy = 0f;
+            for (int i = 0; i < samples.Count; i++)
+            {
+                Vector2 sample = samples[i];
+                if (!IsFinite(sample))
+                    continue;
+                Vector2 delta = sample - mean;
+                xx += delta.x * delta.x;
+                xy += delta.x * delta.y;
+                yy += delta.y * delta.y;
+            }
+
+            if (xx + yy < 0.000001f)
+                return Vector2.up;
+            float angle = 0.5f * Mathf.Atan2(2f * xy, xx - yy);
+            Vector2 axis = new Vector2(
+                Mathf.Cos(angle), Mathf.Sin(angle)).normalized;
+            if (Vector2.Dot(axis, Vector2.up) < 0f)
+                axis = -axis;
+            return axis;
+        }
+
+        private Vector2 LimitWalkingAxisCorrection(Vector2 axis)
+        {
+            if (!IsFinite(axis) || axis.sqrMagnitude < 0.001f)
+                return Vector2.up;
+            float correction = Mathf.Clamp(
+                GetWalkingAxisCorrectionDegrees(axis),
+                -maximumWalkingAxisCorrectionDegrees,
+                maximumWalkingAxisCorrectionDegrees);
+            float radians = correction * Mathf.Deg2Rad;
+            return new Vector2(
+                Mathf.Sin(radians), Mathf.Cos(radians)).normalized;
+        }
+
+        private static float GetWalkingAxisCorrectionDegrees(Vector2 axis)
+        {
+            return Mathf.Atan2(axis.x, axis.y) * Mathf.Rad2Deg;
+        }
+
+        private static Vector2 AlignForceToWalkingAxis(
+            Vector2 force, Vector2 walkingAxis)
+        {
+            if (!IsFinite(walkingAxis) ||
+                walkingAxis.sqrMagnitude < 0.001f)
+                walkingAxis = Vector2.up;
+            walkingAxis.Normalize();
+            Vector2 lateralAxis = new Vector2(
+                walkingAxis.y, -walkingAxis.x);
+            return new Vector2(
+                Vector2.Dot(force, lateralAxis),
+                Vector2.Dot(force, walkingAxis));
+        }
+
+        private static bool IsFinite(Vector2 value)
+        {
+            return !float.IsNaN(value.x) &&
+                   !float.IsInfinity(value.x) &&
+                   !float.IsNaN(value.y) &&
+                   !float.IsInfinity(value.y);
         }
 
         private void CompleteThumbJumpCalibration()
@@ -1570,10 +1906,65 @@ namespace Dexter.Spider
                 : values[middle];
         }
 
+        private static Vector2 EstimateStableDexterBaseline(
+            List<Vector2> samples)
+        {
+            if (samples == null || samples.Count == 0)
+                return Vector2.zero;
+
+            var xValues = new List<float>(samples.Count);
+            var yValues = new List<float>(samples.Count);
+            for (int i = 0; i < samples.Count; i++)
+            {
+                if (float.IsNaN(samples[i].x) ||
+                    float.IsInfinity(samples[i].x) ||
+                    float.IsNaN(samples[i].y) ||
+                    float.IsInfinity(samples[i].y))
+                    continue;
+                xValues.Add(samples[i].x);
+                yValues.Add(samples[i].y);
+            }
+
+            return new Vector2(
+                EstimateStableDexterComponent(xValues),
+                EstimateStableDexterComponent(yValues));
+        }
+
+        private static float EstimateStableDexterComponent(
+            List<float> values)
+        {
+            if (values == null || values.Count == 0)
+                return 0f;
+
+            values.Sort();
+            int windowSize = Mathf.Clamp(
+                Mathf.RoundToInt(values.Count * 0.20f),
+                Mathf.Min(8, values.Count), values.Count);
+            int bestStart = 0;
+            float narrowestSpan = float.PositiveInfinity;
+            for (int start = 0;
+                 start + windowSize <= values.Count; start++)
+            {
+                float span = values[start + windowSize - 1] -
+                             values[start];
+                if (span >= narrowestSpan)
+                    continue;
+                narrowestSpan = span;
+                bestStart = start;
+            }
+
+            float sum = 0f;
+            for (int i = bestStart; i < bestStart + windowSize; i++)
+                sum += values[i];
+            return sum / windowSize;
+        }
+
         private void ResetInputStateForMovementCalibration()
         {
             smoothedLeftForce = Vector2.zero;
             smoothedRightForce = Vector2.zero;
+            smoothedLeftDexterSpeedForce = 0f;
+            smoothedRightDexterSpeedForce = 0f;
             pressedFinger = 0;
             lastActiveFinger = 0;
             lastFingerPressTime = -1f;
@@ -1584,11 +1975,15 @@ namespace Dexter.Spider
             alternatingDriveAuthorized = false;
             gaitDriveActive = false;
             lastCompletedAlternationTime = -1f;
+            ResetWalkingIntentDetection();
             lastLiveFingerInputTime = -1f;
             forwardSpeed = 0f;
             turnInput = 0f;
             currentTurnSpeed = 0f;
             turnGaitWeight = 0f;
+            pendingTurnDirection = 0;
+            pendingTurnStartedAt = -1f;
+            pendingTurnReferenceMagnitude = 0f;
             wasTurnGestureActive = false;
             isRecoveringFromTurn = false;
             leftSideWaveInPlace = false;
@@ -1643,6 +2038,7 @@ namespace Dexter.Spider
             sampledJumpPeakDirection = Vector2.zero;
             jumpPressQualified = false;
             lastJumpLandedAt = float.NegativeInfinity;
+            jumpReleaseBeganAt = -1f;
             jumpStartRotation = transform.rotation;
             jumpTargetRotation = transform.rotation;
         }
@@ -1702,8 +2098,10 @@ namespace Dexter.Spider
         private float GetActiveTurnMaximumSpeedDisplacement()
         {
             return IsUsingCalibratedDexterInput()
-                ? GetActiveTurnMinimumSpeedDisplacement() *
-                  dexterMaximumSpeedForceMultiplier
+                ? Mathf.Max(
+                    GetActiveTurnMinimumSpeedDisplacement() + 0.001f,
+                    calibratedDexterReferenceForce *
+                    dexterTurnMaximumSpeedReferenceMultiplier)
                 : turnForceForMaximumSpeed;
         }
 
@@ -1716,6 +2114,32 @@ namespace Dexter.Spider
             float taperedBoost = Mathf.Lerp(
                 dexterFingerInputSensitivity, 1f, forceStrength);
             return force * taperedBoost;
+        }
+
+        private Vector2 SnapCalibratedWalkingForceToY(Vector2 force)
+        {
+            float absoluteY = Mathf.Abs(force.y);
+            if (absoluteY < 0.0001f ||
+                Mathf.Abs(force.x) >
+                absoluteY * calibratedWalkingCorridorRatio)
+                return force;
+
+            force.x = Mathf.Lerp(
+                force.x, 0f, calibratedWalkingLateralSuppression);
+            return force;
+        }
+
+        private float UpdateDexterSpeedForceEnvelope(
+            float current, float target)
+        {
+            if (target >= current)
+                return target;
+            float releaseRate = Mathf.Max(
+                calibratedDexterReferenceForce,
+                current) / Mathf.Max(
+                0.05f, dexterSpeedForceReleaseSeconds);
+            return Mathf.MoveTowards(
+                current, target, releaseRate * Time.deltaTime);
         }
 
         private static float CalculateStandardDeviation(float mean, float squareSum, int samples)
@@ -1732,7 +2156,11 @@ namespace Dexter.Spider
             Vector2 leftForce = Vector2.zero;
             Vector2 rightForce = Vector2.zero;
             Vector2 jumpForce = Vector2.zero;
+            float leftDexterSpeedForce = 0f;
+            float rightDexterSpeedForce = 0f;
             bool hasJumpForce = false;
+            bool usingPhysicalDexterInput =
+                IsPhysicalDexterFrame(receiver?.LatestFrame);
 
             if (receiver.HasRecentFrame && !IsTaring &&
                 !isDexterMovementCalibrating)
@@ -1745,6 +2173,15 @@ namespace Dexter.Spider
                     rightForce = measuredRightForce - (hasBaseline ? rightBaseline : Vector2.zero);
                 if (physicalDexterFrame)
                 {
+                    leftForce = AlignForceToWalkingAxis(
+                        leftForce, calibratedLeftWalkingAxis);
+                    rightForce = AlignForceToWalkingAxis(
+                        rightForce, calibratedRightWalkingAxis);
+                    // Speed uses the calibrated physical force before the
+                    // light-input sensitivity boost. This keeps 1x calibrated
+                    // force equal to exactly 1x walking speed.
+                    leftDexterSpeedForce = Mathf.Abs(leftForce.y);
+                    rightDexterSpeedForce = Mathf.Abs(rightForce.y);
                     leftForce = ApplyDexterFingerSensitivity(leftForce);
                     rightForce = ApplyDexterFingerSensitivity(rightForce);
                     hasJumpForce = TryReadForce(
@@ -1759,17 +2196,70 @@ namespace Dexter.Spider
                 float smoothingBlend = 1f - Mathf.Exp(-Time.deltaTime / temporalSmoothingWindow);
                 smoothedLeftForce = Vector2.Lerp(smoothedLeftForce, leftForce, smoothingBlend);
                 smoothedRightForce = Vector2.Lerp(smoothedRightForce, rightForce, smoothingBlend);
+                smoothedLeftDexterSpeedForce =
+                    UpdateDexterSpeedForceEnvelope(
+                        smoothedLeftDexterSpeedForce,
+                        leftDexterSpeedForce);
+                smoothedRightDexterSpeedForce =
+                    UpdateDexterSpeedForceEnvelope(
+                        smoothedRightDexterSpeedForce,
+                        rightDexterSpeedForce);
             }
             else
             {
                 smoothedLeftForce = leftForce;
                 smoothedRightForce = rightForce;
+                smoothedLeftDexterSpeedForce = leftDexterSpeedForce;
+                smoothedRightDexterSpeedForce = rightDexterSpeedForce;
             }
 
-            bool isTurning = UpdateTurning(
+            if (usingPhysicalDexterInput &&
+                dexterMovementCalibrationComplete)
+            {
+                // Axis calibration removes the repeatable diagonal angle.
+                // Snap the small remaining lateral component completely to
+                // zero so a walking press is visibly and numerically pure Y.
+                // X-dominant input remains available for deliberate turning.
+                smoothedLeftForce = SnapCalibratedWalkingForceToY(
+                    smoothedLeftForce);
+                smoothedRightForce = SnapCalibratedWalkingForceToY(
+                    smoothedRightForce);
+            }
+
+            // Resolve intent before either movement system runs. Dexter finger
+            // presses inevitably create coupled X force, so temporal Y
+            // alternation owns locomotion even when that X is large enough to
+            // satisfy the static turn thresholds.
+            bool walkingIntentActive = UpdateWalkingIntentDetection(
                 smoothedLeftForce, smoothedRightForce);
+            float coherentTurnCandidate = GetCoherentTurnCandidate(
+                smoothedLeftForce, smoothedRightForce);
+            bool hasCoherentTurnCandidate =
+                Mathf.Abs(coherentTurnCandidate) > 0f;
+            int singleFingerLiftSide =
+                walkingIntentActive || hasCoherentTurnCandidate
+                ? 0
+                : GetSingleFingerLiftSide(
+                    smoothedLeftForce, smoothedRightForce);
+            debugWalkingIntentActive = walkingIntentActive;
+            debugCoherentTurnCandidate = hasCoherentTurnCandidate;
+            debugInputIntent = walkingIntentActive
+                ? "WALK"
+                : singleFingerLiftSide == 1
+                    ? "LEFT LIFT"
+                    : singleFingerLiftSide == 2
+                        ? "RIGHT LIFT"
+                        : hasCoherentTurnCandidate
+                            ? "TURN CANDIDATE"
+                            : "NEUTRAL";
+            bool isTurning = UpdateTurning(
+                smoothedLeftForce, smoothedRightForce,
+                walkingIntentActive);
+            if (isTurning)
+                debugInputIntent = "TURNING";
             UpdateAlternatingLocomotion(
-                smoothedLeftForce, smoothedRightForce, isTurning);
+                smoothedLeftForce, smoothedRightForce, isTurning,
+                singleFingerLiftSide);
             if (hasJumpForce)
             {
                 currentThumbAppliedForce = jumpForce;
@@ -1798,8 +2288,10 @@ namespace Dexter.Spider
 
             if (isJumping)
             {
-                if (forceMagnitude <= releaseForce)
-                    jumpInputArmed = true;
+                // A release during flight must not pre-arm another jump. The
+                // thumb has to be released deliberately after touchdown.
+                jumpInputArmed = false;
+                jumpReleaseBeganAt = -1f;
                 jumpGateState = 5;
                 return;
             }
@@ -1875,7 +2367,20 @@ namespace Dexter.Spider
             if (!jumpInputArmed)
             {
                 if (forceMagnitude <= releaseForce)
-                    jumpInputArmed = true;
+                {
+                    if (jumpReleaseBeganAt < 0f)
+                        jumpReleaseBeganAt = Time.time;
+                    if (Time.time - jumpReleaseBeganAt >=
+                        jumpRearmReleaseHoldSeconds)
+                    {
+                        jumpInputArmed = true;
+                        jumpReleaseBeganAt = -1f;
+                    }
+                }
+                else
+                {
+                    jumpReleaseBeganAt = -1f;
+                }
                 jumpGateState = 3;
                 return;
             }
@@ -1950,6 +2455,7 @@ namespace Dexter.Spider
             }
 
             jumpInputArmed = false;
+            jumpReleaseBeganAt = -1f;
             isJumping = true;
             jumpId++;
             jumpEventThisFrame = 1;
@@ -1967,7 +2473,10 @@ namespace Dexter.Spider
                 jumpDistance *= strongJumpDistanceMultiplier;
             activeJumpDistance = jumpDistance;
 
-            jumpStartPosition = locomotionWorldPosition;
+            // A physics-owned jump starts from the actual body position, not
+            // from a possibly leading procedural target.
+            jumpStartPosition = transform.position;
+            locomotionWorldPosition = jumpStartPosition;
             jumpUp = traceSupportNormal.sqrMagnitude > 0.25f
                 ? traceSupportNormal.normalized
                 : transform.up;
@@ -2022,6 +2531,19 @@ namespace Dexter.Spider
                     landingNormal * terrainRootClearance;
             }
 
+            if (rigidbodyDynamics != null &&
+                rigidbodyDynamics.isActiveAndEnabled)
+            {
+                // Thumb force selects distance/height; the Rigidbody receives
+                // exactly one velocity-change impulse. No airborne position
+                // drive is allowed to add energy afterward.
+                activeJumpDuration = rigidbodyDynamics.ApplyJumpImpulse(
+                    jumpForward,
+                    jumpUp,
+                    activeJumpDistance,
+                    activeJumpHeight);
+            }
+
             // The jump owns root translation until landing. Discard walking
             // distance accumulated in the air so it cannot cause a landing pop.
             forwardSpeed = 0f;
@@ -2035,6 +2557,13 @@ namespace Dexter.Spider
 
         private void ApplyJumpLocomotion()
         {
+            if (rigidbodyDynamics != null &&
+                rigidbodyDynamics.isActiveAndEnabled)
+            {
+                ApplyImpulseJumpLocomotion();
+                return;
+            }
+
             float duration = Mathf.Max(0.1f, activeJumpDuration);
             float progress = Mathf.Clamp01(
                 (Time.time - jumpStartedAt) / duration);
@@ -2054,12 +2583,26 @@ namespace Dexter.Spider
                 jumpLandingPosition.x = resolvedPosition.x;
                 jumpLandingPosition.z = resolvedPosition.z;
             }
+            if (rigidbodyDynamics != null &&
+                rigidbodyDynamics.isActiveAndEnabled)
+            {
+                // The physics lead limit is not an obstacle. Apply it only
+                // after obstacle retargeting so it cannot shorten the jump's
+                // actual landing destination every frame.
+                resolvedPosition = rigidbodyDynamics.ConstrainDesiredPosition(
+                    resolvedPosition, true);
+            }
             locomotionWorldPosition = resolvedPosition;
-            transform.position = resolvedPosition;
-            transform.rotation = Quaternion.Slerp(
+            Quaternion airborneRotation = Quaternion.Slerp(
                 jumpStartRotation,
                 jumpTargetRotation,
                 travelProgress);
+            ApplyPhysicsOwnedRootPose(
+                resolvedPosition,
+                airborneRotation,
+                jumpUp,
+                0f,
+                true);
             lastAppliedForwardDistance = currentForwardDistance;
 
             if (progress < 1f)
@@ -2067,6 +2610,7 @@ namespace Dexter.Spider
 
             isJumping = false;
             lastJumpLandedAt = Time.time;
+            PrepareImmediatePostJumpGait();
             Vector3 finalLandingPosition = resolvedPosition;
             if (terrainForces != null &&
                 terrainForces.TryGetContinuousRootSurfacePose(
@@ -2081,20 +2625,31 @@ namespace Dexter.Spider
                 finalLandingPosition = ResolveObstacleMovement(
                     resolvedPosition, clearedLandingRoot);
             }
+            if (rigidbodyDynamics != null &&
+                rigidbodyDynamics.isActiveAndEnabled)
+                finalLandingPosition =
+                    rigidbodyDynamics.ConstrainDesiredPosition(
+                        finalLandingPosition, true);
             jumpLandingPosition = finalLandingPosition;
             locomotionWorldPosition = finalLandingPosition;
-            transform.position = finalLandingPosition;
             jumpTargetRotation = terrainForces != null
                 ? terrainForces.GetSlopeAlignedRootRotation(
                     GetTerrainSamplingPosition(),
                     jumpTargetRotation,
                     jumpForward)
                 : Quaternion.LookRotation(jumpForward, jumpUp);
-            transform.rotation = jumpTargetRotation;
+            ApplyPhysicsOwnedRootPose(
+                finalLandingPosition,
+                jumpTargetRotation,
+                jumpUp,
+                0f,
+                false);
             // Make the in-flight facing the new neutral root orientation.
             // The following walking frame therefore begins from exactly the
             // landing heading instead of reconstructing the pre-jump heading.
-            rootLocalRotation = transform.localRotation;
+            rootLocalRotation = transform.parent != null
+                ? Quaternion.Inverse(transform.parent.rotation) * jumpTargetRotation
+                : jumpTargetRotation;
             currentYawDegrees = 0f;
             lastCompletedJumpDistance = Vector3.ProjectOnPlane(
                 transform.position - jumpStartPosition,
@@ -2103,6 +2658,109 @@ namespace Dexter.Spider
             jumpGateState = 3;
             PlaceFeetAtCurrentStance(leftLegs);
             PlaceFeetAtCurrentStance(rightLegs);
+        }
+
+        private void ApplyImpulseJumpLocomotion()
+        {
+            float elapsed = Time.time - jumpStartedAt;
+            float duration = Mathf.Max(0.2f, activeJumpDuration);
+            float progress = Mathf.Clamp01(elapsed / duration);
+            float travelProgress = SmoothStep01(progress);
+            Quaternion airborneRotation = Quaternion.Slerp(
+                jumpStartRotation,
+                jumpTargetRotation,
+                travelProgress);
+
+            // The Rigidbody is authoritative throughout the flight. This
+            // target carries only orientation and the takeoff-surface gravity
+            // direction; it never chases the old procedural parabola.
+            locomotionWorldPosition = transform.position;
+            rigidbodyDynamics.SetDesiredPose(
+                transform.position,
+                airborneRotation,
+                jumpUp,
+                0f,
+                true);
+            lastAppliedForwardDistance = currentForwardDistance;
+
+            Rigidbody jumpBody = rigidbodyDynamics.PhysicsBody;
+            bool descending = jumpBody == null ||
+                Vector3.Dot(jumpBody.linearVelocity, jumpUp) <= 0f;
+            bool reachedSurface = progress >= 0.80f && descending &&
+                (rigidbodyDynamics.HasBodySupportContact(jumpUp) ||
+                 rigidbodyDynamics.HasSupportContact(jumpUp));
+            bool safetyTimeout = elapsed >= duration + 1.25f;
+            if (!reachedSurface && !safetyTimeout)
+                return;
+
+            isJumping = false;
+            lastJumpLandedAt = Time.time;
+            PrepareImmediatePostJumpGait();
+            rigidbodyDynamics.CompleteJumpLanding(jumpUp);
+            Vector3 actualLandingPosition = transform.position;
+            Vector3 groundedTarget = actualLandingPosition;
+            Vector3 landingNormal = jumpUp;
+            if (terrainForces != null &&
+                terrainForces.TryGetContinuousRootSurfacePose(
+                    actualLandingPosition,
+                    terrainRootClearance,
+                    out _,
+                    out _,
+                    out Vector3 clearedSupportNormal,
+                    out Vector3 clearedLandingRoot,
+                    out _))
+            {
+                groundedTarget = ResolveObstacleMovement(
+                    actualLandingPosition,
+                    clearedLandingRoot);
+                landingNormal = clearedSupportNormal;
+            }
+
+            jumpLandingPosition = actualLandingPosition;
+            locomotionWorldPosition = groundedTarget;
+            jumpTargetRotation = terrainForces != null
+                ? terrainForces.GetSlopeAlignedRootRotation(
+                    GetTerrainSamplingPosition(),
+                    jumpTargetRotation,
+                    jumpForward)
+                : Quaternion.LookRotation(jumpForward, landingNormal);
+            rigidbodyDynamics.SetDesiredPose(
+                groundedTarget,
+                jumpTargetRotation,
+                landingNormal,
+                0f,
+                false);
+            rootLocalRotation = transform.parent != null
+                ? Quaternion.Inverse(transform.parent.rotation) *
+                  jumpTargetRotation
+                : jumpTargetRotation;
+            currentYawDegrees = 0f;
+            lastCompletedJumpDistance = Vector3.ProjectOnPlane(
+                actualLandingPosition - jumpStartPosition,
+                jumpUp).magnitude;
+            jumpEventThisFrame = 2;
+            jumpGateState = 3;
+            PlaceFeetAtCurrentStance(leftLegs);
+            PlaceFeetAtCurrentStance(rightLegs);
+        }
+
+        private void PrepareImmediatePostJumpGait()
+        {
+            jumpInputArmed = false;
+            jumpReleaseBeganAt = -1f;
+            forwardSpeed = 0f;
+            leftGaitWeight = 0f;
+            rightGaitWeight = 0f;
+            leftSideWaveInPlace = false;
+            rightSideWaveInPlace = false;
+            leftFingerMimicLift = 0f;
+            rightFingerMimicLift = 0f;
+            currentLeftLegPushDistance = 0f;
+            currentRightLegPushDistance = 0f;
+            pressedFinger = 0;
+            targetLeftGaitPhase = leftGaitPhase;
+            targetRightGaitPhase = rightGaitPhase;
+            lastAppliedForwardDistance = currentForwardDistance;
         }
 
         private Vector3 EnforceJumpSurfaceClearance(Vector3 position)
@@ -2220,7 +2878,9 @@ namespace Dexter.Spider
             }
         }
 
-        private void UpdateAlternatingLocomotion(Vector2 leftForce, Vector2 rightForce, bool isTurning)
+        private void UpdateAlternatingLocomotion(
+            Vector2 leftForce, Vector2 rightForce, bool isTurning,
+            int singleFingerLiftSide)
         {
             float leftActivity = Mathf.Abs(leftForce.y);
             float rightActivity = Mathf.Abs(rightForce.y);
@@ -2236,11 +2896,7 @@ namespace Dexter.Spider
             // also take over immediately once it is clearly dominant; requiring
             // the previous finger to cross zero caused multi-second freezes while
             // the user was already performing a valid alternating motion.
-            if (isTurning)
-            {
-                pressedFinger = 0;
-            }
-            else if (pressedFinger != 0)
+            if (pressedFinger != 0)
             {
                 bool pressedFingerWasReleased = pressedFinger == 1
                     ? leftActivity <= leftAdaptiveReleaseThreshold
@@ -2257,20 +2913,20 @@ namespace Dexter.Spider
                     activeFinger = 1;
             }
 
-            if (!isTurning && pressedFinger == 0 && activeFinger == 0 &&
+            if (pressedFinger == 0 && activeFinger == 0 &&
                 leftActivity >= leftAdaptiveActivationThreshold &&
                 leftActivity >= rightActivity + alternationDominanceMargin)
             {
                 activeFinger = 1;
             }
-            else if (!isTurning && pressedFinger == 0 && activeFinger == 0 &&
+            else if (pressedFinger == 0 && activeFinger == 0 &&
                      rightActivity >= rightAdaptiveActivationThreshold &&
                      rightActivity >= leftActivity + alternationDominanceMargin)
             {
                 activeFinger = 2;
             }
 
-            if (!isTurning && pressIntervalElapsed && activeFinger != 0 && activeFinger != pressedFinger)
+            if (pressIntervalElapsed && activeFinger != 0 && activeFinger != pressedFinger)
             {
                 RegisterFingerPress(activeFinger);
                 pressedFinger = activeFinger;
@@ -2278,11 +2934,23 @@ namespace Dexter.Spider
 
             // Alternation only unlocks walking. Live displacement—not the
             // alternation interval—drives speed and stride on every frame.
-            float liveDisplacement = Mathf.Max(leftActivity, rightActivity);
+            float liveDisplacement = IsUsingCalibratedDexterInput()
+                ? Mathf.Max(
+                    smoothedLeftDexterSpeedForce,
+                    smoothedRightDexterSpeedForce)
+                : Mathf.Max(leftActivity, rightActivity);
             bool hasLiveFingerInput = leftActivity >= leftAdaptiveActivationThreshold ||
                                       rightActivity >= rightAdaptiveActivationThreshold;
             if (hasLiveFingerInput)
                 lastLiveFingerInputTime = Time.time;
+            else if (leftActivity <= leftAdaptiveReleaseThreshold &&
+                     rightActivity <= rightAdaptiveReleaseThreshold)
+            {
+                // Direct side lifts must end with the physical press, not with
+                // the longer gait release grace period.
+                leftSideWaveInPlace = false;
+                rightSideWaveInPlace = false;
+            }
 
             bool inputRecentlyActive = lastLiveFingerInputTime >= 0f &&
                 Time.time - lastLiveFingerInputTime <= inputDriveReleaseDelay;
@@ -2303,18 +2971,29 @@ namespace Dexter.Spider
             gaitDriveActive = alternatingDriveAuthorized &&
                               alternationRecentlyConfirmed &&
                               inputRecentlyActive &&
+                              !isJumping &&
                               !isTurning &&
                               !isRecoveringFromTurn;
+
+            if (singleFingerLiftSide != 0 && !isTurning)
+            {
+                // An isolated finger directly owns its matching side. It can
+                // prepare/lift the legs and influence body support, but it does
+                // not authorize forward locomotion by itself.
+                leftSideWaveInPlace = singleFingerLiftSide == 1;
+                rightSideWaveInPlace = singleFingerLiftSide == 2;
+                gaitDriveActive = false;
+            }
 
             float activeMinimumSpeedDisplacement =
                 GetActiveMinimumSpeedDisplacement();
             float leftMimicTarget = leftSideWaveInPlace
                 ? Mathf.InverseLerp(0f, activeMinimumSpeedDisplacement,
-                    Mathf.Max(0f, smoothedLeftForce.y)) * fingerMimicLiftHeight
+                    leftActivity) * fingerMimicLiftHeight
                 : 0f;
             float rightMimicTarget = rightSideWaveInPlace
                 ? Mathf.InverseLerp(0f, activeMinimumSpeedDisplacement,
-                    Mathf.Max(0f, smoothedRightForce.y)) * fingerMimicLiftHeight
+                    rightActivity) * fingerMimicLiftHeight
                 : 0f;
             leftFingerMimicLift = Mathf.MoveTowards(
                 leftFingerMimicLift, leftMimicTarget,
@@ -2339,6 +3018,19 @@ namespace Dexter.Spider
                 0.5f / referenceHalfStepDuration *
                 activeForceSpeedMultiplier *
                 overallMovementSpeedMultiplier;
+            if (IsUsingCalibratedDexterInput())
+            {
+                // Let stronger input increase the distance carried by each
+                // planted step first. Cadence supplies only the remaining
+                // speed so the legs do not jitter at the high-force endpoint.
+                float baselineStride = Mathf.Max(
+                    0.001f, minimumForceStrideLength);
+                requestedGaitPhaseSpeed *= baselineStride /
+                    Mathf.Max(baselineStride, activeForceStrideLength);
+                requestedGaitPhaseSpeed = Mathf.Min(
+                    requestedGaitPhaseSpeed,
+                    dexterMaximumGaitCyclesPerSecond);
+            }
             float phaseSpeedBlend = 1f - Mathf.Exp(
                 -gaitBlendSpeed * Time.deltaTime);
             gaitPhaseSpeed = Mathf.Lerp(
@@ -2347,10 +3039,8 @@ namespace Dexter.Spider
                 activeForceLiftMultiplier,
                 GetForceLiftMultiplier(liveDisplacement),
                 phaseSpeedBlend);
-            float locomotionStride = Mathf.Clamp(
-                Mathf.Max(minimumStrideLength, activeForceStrideLength),
-                minimumStrideLength,
-                maximumStrideLength) * walkingStrideEmphasis;
+            float locomotionStride =
+                GetActiveForceDrivenStrideLength() * walkingStrideEmphasis;
             float strideMatchedSpeed = gaitPhaseSpeed * locomotionStride;
             float forceSpeedCeiling = normalForceTravelSpeed *
                                       activeForceSpeedMultiplier *
@@ -2362,11 +3052,24 @@ namespace Dexter.Spider
                 requestedForwardSpeed *= environmentForces.GetMovementMultiplier(
                     locomotionWorldPosition);
             requestedForwardSpeed *= GetPlantedPushDriveStrength();
+            bool isAccelerating = Mathf.Abs(requestedForwardSpeed) >
+                                  Mathf.Abs(forwardSpeed);
+            float walkingSpeedResponseScale =
+                IsUsingCalibratedDexterInput()
+                    ? (isAccelerating
+                        ? dexterWalkingAccelerationResponseScale
+                        : dexterWalkingBrakingResponseScale)
+                    : 1f;
             forwardSpeed = terrainForces != null
                 ? terrainForces.MoveWalkingSpeed(
-                    forwardSpeed, requestedForwardSpeed, Time.deltaTime)
+                    forwardSpeed,
+                    requestedForwardSpeed,
+                    Time.deltaTime * walkingSpeedResponseScale)
                 : Mathf.MoveTowards(
-                    forwardSpeed, requestedForwardSpeed, Time.deltaTime * 6f);
+                    forwardSpeed,
+                    requestedForwardSpeed,
+                    Time.deltaTime * 6f *
+                    walkingSpeedResponseScale);
             currentForwardDistance += forwardSpeed * Time.deltaTime;
             targetForwardDistance = currentForwardDistance;
 
@@ -2388,10 +3091,14 @@ namespace Dexter.Spider
                                         lastFingerPressTime >= 0f &&
                                         now - lastFingerPressTime <=
                                         maximumAlternationInterval;
+            bool consistentAlternation = completesAlternation &&
+                lastConfirmedWalkingPatternTime >= 0f &&
+                now - lastConfirmedWalkingPatternTime <=
+                establishedWalkingIntentHoldSeconds;
 
             if (activeFinger == 1)
             {
-                leftSideWaveInPlace = !completesAlternation;
+                leftSideWaveInPlace = !consistentAlternation;
                 if (lastLeftFingerPressTime >= 0f)
                 {
                     float cadence = 1f / Mathf.Max(
@@ -2407,7 +3114,7 @@ namespace Dexter.Spider
             }
             else
             {
-                rightSideWaveInPlace = !completesAlternation;
+                rightSideWaveInPlace = !consistentAlternation;
                 if (lastRightFingerPressTime >= 0f)
                 {
                     float cadence = 1f / Mathf.Max(
@@ -2424,7 +3131,7 @@ namespace Dexter.Spider
 
             // Before alternation, the selected side follows finger height
             // directly. Once alternating, presses advance normal walking phases.
-            if (completesAlternation)
+            if (consistentAlternation)
             {
                 leftSideWaveInPlace = false;
                 rightSideWaveInPlace = false;
@@ -2448,6 +3155,29 @@ namespace Dexter.Spider
 
         private float GetForceStepSpeedMultiplier(float fingerForce)
         {
+            if (IsUsingCalibratedDexterInput())
+            {
+                float reference = Mathf.Max(
+                    0.001f, calibratedDexterReferenceForce);
+                float forceRatio = Mathf.Max(0f, fingerForce) / reference;
+                if (forceRatio <= 1f)
+                {
+                    return Mathf.Lerp(
+                        dexterMinimumWalkingSpeedMultiplier *
+                        dexterBaselineWalkingSpeedMultiplier,
+                        dexterBaselineWalkingSpeedMultiplier,
+                        Mathf.Clamp01(forceRatio));
+                }
+
+                return Mathf.Lerp(
+                    dexterBaselineWalkingSpeedMultiplier,
+                    dexterHighForceWalkingSpeedMultiplier,
+                    Mathf.InverseLerp(
+                        1f,
+                        dexterMaximumSpeedForceMultiplier,
+                        forceRatio));
+            }
+
             float displacementStrength = GetForceDisplacementStrength(
                 fingerForce);
             return Mathf.Lerp(
@@ -2458,12 +3188,47 @@ namespace Dexter.Spider
 
         private float GetForceStrideLength(float fingerForce)
         {
+            if (IsUsingCalibratedDexterInput())
+            {
+                float reference = Mathf.Max(
+                    0.001f, calibratedDexterReferenceForce);
+                float forceRatio = Mathf.Max(0f, fingerForce) / reference;
+                if (forceRatio <= 1f)
+                {
+                    return Mathf.Lerp(
+                        minimumForceStrideLength,
+                        dexterBaselineStrideLength,
+                        Mathf.Clamp01(forceRatio));
+                }
+
+                return Mathf.Lerp(
+                    dexterBaselineStrideLength,
+                    dexterHighForceStrideLength,
+                    Mathf.InverseLerp(
+                        1f,
+                        dexterMaximumSpeedForceMultiplier,
+                        forceRatio));
+            }
+
             float displacementStrength = GetForceDisplacementStrength(
                 fingerForce);
             return Mathf.Lerp(
                 minimumForceStrideLength,
                 maximumForceStrideLength,
                 displacementStrength);
+        }
+
+        private float GetActiveForceDrivenStrideLength()
+        {
+            float maximumReach = IsUsingCalibratedDexterInput()
+                ? Mathf.Min(
+                    dexterHighForceStrideLength,
+                    maximumForeAftMovement)
+                : maximumStrideLength;
+            return Mathf.Clamp(
+                Mathf.Max(minimumStrideLength, activeForceStrideLength),
+                minimumStrideLength,
+                Mathf.Max(minimumStrideLength, maximumReach));
         }
 
         private float GetForceLiftMultiplier(float fingerForce)
@@ -2500,10 +3265,9 @@ namespace Dexter.Spider
             bool rightIsMoving = gaitDriveActive;
             if (gaitDriveActive)
             {
-                float gaitTravelStride = Mathf.Clamp(
-                    Mathf.Max(minimumStrideLength, activeForceStrideLength),
-                    minimumStrideLength,
-                    maximumStrideLength) * walkingStrideEmphasis;
+                float gaitTravelStride =
+                    GetActiveForceDrivenStrideLength() *
+                    walkingStrideEmphasis;
                 float surfaceSpeedMultiplier = terrainForces != null
                     ? terrainForces.GetMovementMultiplier(
                         GetTerrainSamplingPosition())
@@ -2533,10 +3297,7 @@ namespace Dexter.Spider
             leftGaitWeight = Mathf.Lerp(leftGaitWeight, leftIsMoving ? 1f : 0f, gaitBlend);
             rightGaitWeight = Mathf.Lerp(rightGaitWeight, rightIsMoving ? 1f : 0f, gaitBlend);
 
-            float strideLength = Mathf.Clamp(
-                Mathf.Max(minimumStrideLength, activeForceStrideLength),
-                minimumStrideLength,
-                maximumStrideLength);
+            float strideLength = GetActiveForceDrivenStrideLength();
             UpdateSideWorldTargets(
                 leftLegs, true, Mathf.Repeat(leftGaitPhase, 1f),
                 leftGaitWeight,
@@ -2552,27 +3313,255 @@ namespace Dexter.Spider
                 1);
         }
 
-        private bool UpdateTurning(Vector2 leftForce, Vector2 rightForce)
+        private void ResetWalkingIntentDetection()
         {
-            float xSign = invertFx ? -1f : 1f;
-            float leftX = leftForce.x * xSign;
-            float rightX = rightForce.x * xSign;
+            lastAlternatingYIntentTime = -1f;
+            alternatingYIntentConfidence = 0f;
+            previousLeftYActivity = 0f;
+            previousRightYActivity = 0f;
+            hasPreviousYActivity = false;
+            previousYDominantFinger = 0;
+            lastYDominanceEventTime = -1f;
+            lastQualifiedYHandoffTime = -1f;
+            lastConfirmedWalkingPatternTime = -1f;
+        }
+
+        private int GetSingleFingerLiftSide(
+            Vector2 leftForce, Vector2 rightForce)
+        {
+            float leftActivity = Mathf.Abs(leftForce.y);
+            float rightActivity = Mathf.Abs(rightForce.y);
+            bool leftActive = leftActivity >= leftAdaptiveActivationThreshold;
+            bool rightActive = rightActivity >= rightAdaptiveActivationThreshold;
+            float isolationRatio = Mathf.Clamp(
+                singleFingerIsolationRatio, 0.05f, 0.75f);
+
+            bool leftIsolated = leftActive &&
+                (!rightActive || rightActivity <= leftActivity * isolationRatio);
+            bool rightIsolated = rightActive &&
+                (!leftActive || leftActivity <= rightActivity * isolationRatio);
+            if (leftIsolated == rightIsolated)
+                return 0;
+            return leftIsolated ? 1 : 2;
+        }
+
+        private bool UpdateWalkingIntentDetection(
+            Vector2 leftForce, Vector2 rightForce)
+        {
+            float leftActivity = Mathf.Abs(leftForce.y);
+            float rightActivity = Mathf.Abs(rightForce.y);
+            float minimumDelta = Mathf.Max(
+                0.001f,
+                calibratedDexterReferenceForce * walkingIntentDeltaFraction);
+            bool alternatingMotion = false;
+
+            if (hasPreviousYActivity)
+            {
+                float leftDelta = leftActivity - previousLeftYActivity;
+                float rightDelta = rightActivity - previousRightYActivity;
+                alternatingMotion =
+                    Mathf.Abs(leftDelta) >= minimumDelta &&
+                    Mathf.Abs(rightDelta) >= minimumDelta &&
+                    leftDelta * rightDelta < 0f;
+            }
+
+            int dominantFinger = 0;
+            if (leftActivity >= leftAdaptiveActivationThreshold &&
+                leftActivity >= rightActivity + alternationDominanceMargin)
+                dominantFinger = 1;
+            else if (rightActivity >= rightAdaptiveActivationThreshold &&
+                     rightActivity >= leftActivity + alternationDominanceMargin)
+                dominantFinger = 2;
+
+            bool bothFingersReleased =
+                leftActivity <= leftAdaptiveReleaseThreshold &&
+                rightActivity <= rightAdaptiveReleaseThreshold;
+            if (bothFingersReleased)
+            {
+                // Do not connect a new isolated press to a dominant finger
+                // remembered from an earlier walk. After neutral, the first
+                // finger is a side-lift gesture until a new alternation occurs.
+                previousYDominantFinger = 0;
+                lastYDominanceEventTime = -1f;
+                lastQualifiedYHandoffTime = -1f;
+                lastConfirmedWalkingPatternTime = -1f;
+                alternatingYIntentConfidence = 0f;
+                lastAlternatingYIntentTime = -1f;
+                lastCompletedAlternationTime = -1f;
+                alternatingDriveAuthorized = false;
+            }
+
+            bool dominanceChanged = dominantFinger != 0 &&
+                previousYDominantFinger != 0 &&
+                dominantFinger != previousYDominantFinger;
+            bool dominanceChangedInTime = dominanceChanged &&
+                lastYDominanceEventTime >= 0f &&
+                Time.time - lastYDominanceEventTime <=
+                maximumAlternationInterval;
+            if (dominantFinger != 0 &&
+                (previousYDominantFinger == 0 || dominanceChanged))
+                lastYDominanceEventTime = Time.time;
+            bool completesConsistentPattern = dominanceChangedInTime &&
+                lastQualifiedYHandoffTime >= 0f &&
+                Time.time - lastQualifiedYHandoffTime <=
+                maximumAlternationInterval;
+            if (dominanceChangedInTime)
+            {
+                lastQualifiedYHandoffTime = Time.time;
+                if (completesConsistentPattern)
+                    lastConfirmedWalkingPatternTime = Time.time;
+            }
+            if (dominantFinger != 0)
+                previousYDominantFinger = dominantFinger;
+
+            bool hasEstablishedWalkingPattern =
+                lastConfirmedWalkingPatternTime >= 0f &&
+                Time.time - lastConfirmedWalkingPatternTime <=
+                establishedWalkingIntentHoldSeconds;
+            alternatingMotion &= hasEstablishedWalkingPattern;
+
+            float confirmationTime = Mathf.Max(
+                0.02f, walkingIntentConfirmationSeconds);
+            if (alternatingMotion)
+            {
+                alternatingYIntentConfidence = Mathf.MoveTowards(
+                    alternatingYIntentConfidence, 1f,
+                    Time.deltaTime / confirmationTime);
+            }
+            else
+            {
+                // Decay more slowly than confidence rises so the zero-velocity
+                // peaks of a deliberate finger cycle do not break detection.
+                alternatingYIntentConfidence = Mathf.MoveTowards(
+                    alternatingYIntentConfidence, 0f,
+                    Time.deltaTime / (confirmationTime * 2f));
+            }
+
+            if (completesConsistentPattern)
+                alternatingYIntentConfidence = 1f;
+
+            if (alternatingYIntentConfidence >= 0.75f)
+            {
+                lastAlternatingYIntentTime = Time.time;
+                lastConfirmedWalkingPatternTime = Time.time;
+                // The rolling detector is deliberately allowed to authorize
+                // the same gait as a discrete finger swap. This avoids losing
+                // walking when both loaded fingers never cross their release
+                // thresholds, which is common with the physical Dexter device.
+                alternatingDriveAuthorized = true;
+                lastCompletedAlternationTime = Time.time;
+                leftSideWaveInPlace = false;
+                rightSideWaveInPlace = false;
+            }
+
+            previousLeftYActivity = leftActivity;
+            previousRightYActivity = rightActivity;
+            hasPreviousYActivity = true;
+
+            float intentHold = Mathf.Max(
+                establishedWalkingIntentHoldSeconds,
+                walkingPriorityAfterAlternation);
+            bool rollingAlternationIsRecent =
+                lastAlternatingYIntentTime >= 0f &&
+                Time.time - lastAlternatingYIntentTime <= intentHold;
+            bool discreteAlternationIsRecent =
+                lastCompletedAlternationTime >= 0f &&
+                Time.time - lastCompletedAlternationTime <= intentHold;
+            return rollingAlternationIsRecent ||
+                   (hasEstablishedWalkingPattern &&
+                    discreteAlternationIsRecent);
+        }
+
+        private bool UpdateTurning(
+            Vector2 leftForce, Vector2 rightForce,
+            bool walkingIntentActive)
+        {
             float requestedTurn = 0f;
             float activeTurnActivationForce =
                 GetActiveTurnActivationForce();
-            bool leftTurnReady = Mathf.Abs(leftX) >=
-                                 activeTurnActivationForce &&
-                                 Mathf.Abs(leftX) >=
-                                 Mathf.Abs(leftForce.y) * turnAxisDominanceRatio;
-            bool rightTurnReady = Mathf.Abs(rightX) >=
-                                  activeTurnActivationForce &&
-                                  Mathf.Abs(rightX) >=
-                                  Mathf.Abs(rightForce.y) * turnAxisDominanceRatio;
+            float candidateTurn = GetCoherentTurnCandidate(
+                leftForce, rightForce);
 
-            if (leftTurnReady && rightTurnReady && leftX > 0f && rightX > 0f)
-                requestedTurn = Mathf.Min(leftX, rightX);
-            else if (leftTurnReady && rightTurnReady && leftX < 0f && rightX < 0f)
-                requestedTurn = -Mathf.Min(-leftX, -rightX);
+            if (candidateTurn == 0f)
+            {
+                debugTurnDecision = walkingIntentActive
+                    ? "Walking: no coherent constant X takeover"
+                    : "Rejected: X is not coherent on both fingers";
+            }
+
+            int candidateDirection = candidateTurn > 0f
+                ? 1
+                : candidateTurn < 0f ? -1 : 0;
+            float candidateMagnitude = Mathf.Abs(candidateTurn);
+            if (candidateDirection == 0)
+            {
+                pendingTurnDirection = 0;
+                pendingTurnStartedAt = -1f;
+                pendingTurnReferenceMagnitude = 0f;
+            }
+            else if (candidateDirection != pendingTurnDirection)
+            {
+                pendingTurnDirection = candidateDirection;
+                pendingTurnStartedAt = Time.time;
+                pendingTurnReferenceMagnitude = candidateMagnitude;
+                debugTurnDecision = "Confirming constant X";
+            }
+            else
+            {
+                float permittedVariation = Mathf.Max(
+                    activeTurnActivationForce * 0.35f,
+                    pendingTurnReferenceMagnitude *
+                    turnConstantForceTolerance);
+                if (candidateMagnitude <
+                    pendingTurnReferenceMagnitude - permittedVariation)
+                {
+                    // A substantial drop marks the end of an X pulse and must
+                    // prove itself again. A same-direction rise is expected
+                    // when the user begins pressing to turn, so it must not
+                    // restart the confirmation timer.
+                    pendingTurnStartedAt = Time.time;
+                    pendingTurnReferenceMagnitude = candidateMagnitude;
+                    debugTurnDecision =
+                        "Waiting: X dropped too quickly";
+                }
+                else
+                {
+                    pendingTurnReferenceMagnitude = Mathf.Lerp(
+                        pendingTurnReferenceMagnitude,
+                        candidateMagnitude,
+                        1f - Mathf.Exp(-5f * Time.deltaTime));
+                    float requiredHold = walkingIntentActive
+                        ? Mathf.Max(
+                            turnIntentHoldSeconds,
+                            turnWalkingTakeoverSeconds)
+                        : turnIntentHoldSeconds;
+                    if (pendingTurnStartedAt >= 0f &&
+                        Time.time - pendingTurnStartedAt >=
+                        requiredHold)
+                    {
+                        requestedTurn = candidateTurn;
+                        if (walkingIntentActive)
+                        {
+                            // A proven constant-X gesture may take control
+                            // directly instead of waiting for the full
+                            // established-walk ownership window to expire.
+                            ResetWalkingIntentDetection();
+                            alternatingDriveAuthorized = false;
+                            gaitDriveActive = false;
+                            lastCompletedAlternationTime = -1f;
+                            debugTurnDecision =
+                                "Accepted: constant X took over from walk";
+                        }
+                        else
+                            debugTurnDecision =
+                                "Accepted: constant X turn";
+                    }
+                    else
+                        debugTurnDecision = walkingIntentActive
+                            ? "Confirming constant X takeover from walk"
+                            : "Confirming constant X";
+                }
+            }
 
             float blend = 1f - Mathf.Exp(-turnResponseSpeed * Time.deltaTime);
             turnInput = Mathf.Lerp(turnInput, requestedTurn, blend);
@@ -2587,7 +3576,18 @@ namespace Dexter.Spider
                     minimumTurnDegreesPerSecond,
                     maximumTurnDegreesPerSecond,
                     Mathf.Sqrt(strength));
-            currentTurnSpeed = Mathf.Lerp(currentTurnSpeed, requestedSpeed, blend);
+            bool turnIsSlowing =
+                Mathf.Abs(requestedSpeed) < Mathf.Abs(currentTurnSpeed) ||
+                requestedSpeed != 0f &&
+                currentTurnSpeed != 0f &&
+                Mathf.Sign(requestedSpeed) != Mathf.Sign(currentTurnSpeed);
+            float angularResponse = turnIsSlowing
+                ? turnAngularDeceleration
+                : turnAngularAcceleration;
+            currentTurnSpeed = Mathf.MoveTowards(
+                currentTurnSpeed,
+                requestedSpeed,
+                angularResponse * Time.deltaTime);
             currentYawDegrees += currentTurnSpeed * Time.deltaTime;
             turnGaitWeight = Mathf.Lerp(
                 turnGaitWeight, requestedTurn == 0f ? 0f : 1f, blend);
@@ -2609,6 +3609,28 @@ namespace Dexter.Spider
             wasTurnGestureActive = hasTurnGesture;
 
             return hasTurnGesture;
+        }
+
+        private float GetCoherentTurnCandidate(
+            Vector2 leftForce, Vector2 rightForce)
+        {
+            float xSign = invertFx ? -1f : 1f;
+            float leftX = leftForce.x * xSign;
+            float rightX = rightForce.x * xSign;
+            float activation = GetActiveTurnActivationForce();
+            bool leftReady = Mathf.Abs(leftX) >= activation &&
+                Mathf.Abs(leftX) >=
+                Mathf.Abs(leftForce.y) * turnAxisDominanceRatio;
+            bool rightReady = Mathf.Abs(rightX) >= activation &&
+                Mathf.Abs(rightX) >=
+                Mathf.Abs(rightForce.y) * turnAxisDominanceRatio;
+            if (leftReady && rightReady &&
+                Mathf.Sign(leftX) == Mathf.Sign(rightX))
+            {
+                return Mathf.Sign(leftX) *
+                       Mathf.Min(Mathf.Abs(leftX), Mathf.Abs(rightX));
+            }
+            return 0f;
         }
 
         private void UpdateTurningGait()
@@ -2909,10 +3931,22 @@ namespace Dexter.Spider
                 locomotionWorldPosition = transform.position;
                 hasLocomotionWorldPosition = true;
             }
+            if (rigidbodyDynamics != null &&
+                rigidbodyDynamics.isActiveAndEnabled)
+                locomotionWorldPosition =
+                    rigidbodyDynamics.ConstrainDesiredPosition(
+                        locomotionWorldPosition);
 
-            transform.localRotation = rootLocalRotation *
-                                      Quaternion.Euler(0f, currentYawDegrees, 0f);
+            Quaternion desiredLocalRotation = rootLocalRotation *
+                Quaternion.Euler(0f, currentYawDegrees, 0f);
+            Quaternion desiredRootRotation = transform.parent != null
+                ? transform.parent.rotation * desiredLocalRotation
+                : desiredLocalRotation;
+            Vector3 commandedForward = desiredRootRotation * Vector3.forward;
+            Vector3 commandedRight = desiredRootRotation * Vector3.right;
             Vector3 movementStart = locomotionWorldPosition;
+            bool hadSurfaceMotionAnchor = hasClimbSurfaceAnchor;
+            Vector3 previousSurfaceMotionAnchor = climbSurfaceAnchor;
             float forwardDelta = currentForwardDistance - lastAppliedForwardDistance;
             Vector3 surfaceSample = GetTerrainSamplingPosition();
             float terrainMovementMultiplier = terrainForces != null
@@ -2920,12 +3954,17 @@ namespace Dexter.Spider
                 : 1f;
             Vector3 surfaceForward = terrainForces != null
                 ? terrainForces.GetSurfaceTravelDirection(
-                    surfaceSample, GetRigForward())
-                : GetRigForward();
+                    surfaceSample, commandedForward)
+                : commandedForward;
             Vector3 movedSurfaceSample = surfaceSample + surfaceForward *
                 (forwardDelta * terrainMovementMultiplier);
             lastAppliedForwardDistance = currentForwardDistance;
-            if (terrainForces != null)
+            // Passive transform-space gravity is the legacy fallback. A
+            // dynamic body receives gravity, friction, and adhesion in
+            // FixedUpdate and must not have them added to its target as well.
+            if (terrainForces != null &&
+                (rigidbodyDynamics == null ||
+                 !rigidbodyDynamics.isActiveAndEnabled))
                 movedSurfaceSample = terrainForces.ApplyForces(
                     movedSurfaceSample);
 
@@ -2949,7 +3988,7 @@ namespace Dexter.Spider
                 !enteredClimb &&
                 terrainForces.ShouldAnticipateClimbTransition(
                     surfaceSample,
-                    GetRigForward(),
+                    commandedForward,
                     surfaceNormal, supportNormal);
             if (foundSurfaceFrame && enteredClimb != wasOnClimbSurface)
                 BeginSurfaceTransition(enteredClimb);
@@ -2970,7 +4009,6 @@ namespace Dexter.Spider
                 // corner. Sampling from the clearance-offset root would add
                 // that offset again on the next frame and create lateral drift.
                 hasClimbSurfaceAnchor = true;
-                climbSurfaceAnchor = surfacePoint;
                 Vector3 clearedMovementTarget = surfaceClearedRoot;
                 if (rootPositionTransitionActive)
                 {
@@ -2998,18 +4036,16 @@ namespace Dexter.Spider
                 locomotionWorldPosition = ResolveObstacleMovement(
                     movementStart, movedSurfaceSample);
             }
-            transform.position = locomotionWorldPosition;
-
             if (!hasClimbSurfaceAnchor &&
                 hasTerrainRootClearance && terrainForces != null &&
                 terrainForces.TryGetRequiredBodyHeight(
-                    transform.position,
-                    GetRigForward(),
-                    rigSpace.right,
+                    locomotionWorldPosition,
+                    commandedForward,
+                    commandedRight,
                     terrainRootClearance,
                 out float requiredBodyHeight))
             {
-                Vector3 worldPosition = transform.position;
+                Vector3 worldPosition = locomotionWorldPosition;
                 // Raising remains immediate so the body cannot enter rising
                 // terrain. A downward height discontinuity is safe to follow
                 // gradually and avoids a visible drop at a floor/wall lip.
@@ -3019,8 +4055,37 @@ namespace Dexter.Spider
                         worldPosition.y,
                         requiredBodyHeight,
                         cornerRootMaximumSpeed * Time.deltaTime);
-                transform.position = worldPosition;
                 locomotionWorldPosition = worldPosition;
+            }
+
+            if (rigidbodyDynamics != null &&
+                rigidbodyDynamics.isActiveAndEnabled)
+                locomotionWorldPosition =
+                    rigidbodyDynamics.ConstrainDesiredPosition(
+                        locomotionWorldPosition);
+
+            if (foundSurfaceFrame && useSurfaceMotionAnchor)
+            {
+                Vector3 trackedRootPosition =
+                    rigidbodyDynamics != null &&
+                    rigidbodyDynamics.isActiveAndEnabled &&
+                    rigidbodyDynamics.PhysicsBody != null
+                        ? rigidbodyDynamics.PhysicsBody.position
+                        : locomotionWorldPosition;
+                float unresolvedRootDistance = Vector3.Distance(
+                    trackedRootPosition, surfaceClearedRoot);
+                // A steep heightfield can move its sampled contact much
+                // farther than the Rigidbody or corner solver can follow in
+                // one frame. Do not commit that virtual contact until the
+                // torso has caught up to its corresponding cleared pose.
+                // Otherwise every new command starts from an increasingly
+                // distant point and the spider appears to float across gaps.
+                climbSurfaceAnchor =
+                    hadSurfaceMotionAnchor &&
+                    unresolvedRootDistance >
+                    maximumSurfaceAnchorTrackingError
+                        ? previousSurfaceMotionAnchor
+                        : surfacePoint;
             }
 
             UpdateSurfaceTransition(
@@ -3046,24 +4111,62 @@ namespace Dexter.Spider
             {
                 Vector3 facingDirection = surfaceForward;
                 Vector3 actualSurfaceTravel = Vector3.ProjectOnPlane(
-                    transform.position - movementStart,
+                    locomotionWorldPosition - movementStart,
                     foundSurfaceFrame ? supportNormal : Vector3.up);
                 if (Mathf.Abs(forwardDelta) > 0.00001f &&
                     actualSurfaceTravel.sqrMagnitude > 0.00000025f)
                 {
-                    // Use the direction the root actually advanced after
-                    // terrain projection, body clearance, and collision
-                    // resolution. This keeps the face forward even on a
-                    // diagonal or near-vertical surface.
-                    facingDirection = actualSurfaceTravel.normalized;
+                    // Terrain projection may add a small diagonal component,
+                    // but lateral Rigidbody drift must not become the new
+                    // heading and create a self-reinforcing spin. Accept only
+                    // travel that remains close to commanded surface-forward,
+                    // and blend it conservatively.
+                    Vector3 actualDirection =
+                        actualSurfaceTravel.normalized;
+                    if (Vector3.Dot(actualDirection, surfaceForward) >=
+                        Mathf.Cos(30f * Mathf.Deg2Rad))
+                    {
+                        facingDirection = Vector3.Slerp(
+                            surfaceForward,
+                            actualDirection,
+                            0.25f).normalized;
+                    }
                 }
 
-                transform.rotation = terrainForces.GetSlopeAlignedRootRotation(
+                desiredRootRotation = terrainForces.GetSlopeAlignedRootRotation(
                     GetTerrainSamplingPosition(),
-                    transform.rotation,
+                    desiredRootRotation,
                     facingDirection);
             }
 
+            ApplyPhysicsOwnedRootPose(
+                locomotionWorldPosition,
+                desiredRootRotation,
+                foundSurfaceFrame ? supportNormal : Vector3.up,
+                GetPlantedPushDriveStrength(),
+                false);
+
+        }
+
+        private void ApplyPhysicsOwnedRootPose(
+            Vector3 desiredPosition,
+            Quaternion desiredRotation,
+            Vector3 supportNormal,
+            float plantedDrive,
+            bool airborne)
+        {
+            if (rigidbodyDynamics != null && rigidbodyDynamics.isActiveAndEnabled)
+            {
+                rigidbodyDynamics.SetDesiredPose(
+                    desiredPosition,
+                    desiredRotation,
+                    supportNormal,
+                    plantedDrive,
+                    airborne);
+                return;
+            }
+
+            transform.SetPositionAndRotation(desiredPosition, desiredRotation);
         }
 
         private void BeginSurfaceTransition(
@@ -3618,8 +4721,14 @@ namespace Dexter.Spider
 
         private void RestoreFixedTransforms()
         {
-            transform.localPosition = rootLocalPosition;
-            transform.localRotation = rootLocalRotation;
+            // A dynamic Rigidbody owns the root pose. Restoring the authored
+            // root every LateUpdate would erase velocity and cancel all forces.
+            if (rigidbodyDynamics == null ||
+                !rigidbodyDynamics.isActiveAndEnabled)
+            {
+                transform.localPosition = rootLocalPosition;
+                transform.localRotation = rootLocalRotation;
+            }
             transform.localScale = rootLocalScale;
             body.localPosition = bodyLocalPosition;
             body.localRotation = bodyLocalRotation;
@@ -3952,12 +5061,61 @@ namespace Dexter.Spider
             calibrationDurationSeconds = Mathf.Max(0.25f, calibrationDurationSeconds);
             minimumDexterCalibrationForce = Mathf.Max(
                 0.01f, minimumDexterCalibrationForce);
+            minimumCalibrationWiggleRange = Mathf.Max(
+                0.01f, minimumCalibrationWiggleRange);
+            maximumWalkingAxisCorrectionDegrees = Mathf.Clamp(
+                maximumWalkingAxisCorrectionDegrees, 0f, 80f);
+            calibratedWalkingLateralSuppression = Mathf.Clamp01(
+                calibratedWalkingLateralSuppression);
+            calibratedWalkingCorridorRatio = Mathf.Clamp(
+                calibratedWalkingCorridorRatio, 0.1f, 0.75f);
             dexterMaximumSpeedForceMultiplier = Mathf.Clamp(
                 dexterMaximumSpeedForceMultiplier, 1.05f, 6f);
+            dexterHighForceWalkingSpeedMultiplier = Mathf.Clamp(
+                dexterHighForceWalkingSpeedMultiplier, 1f, 24f);
+            dexterBaselineWalkingSpeedMultiplier = Mathf.Clamp(
+                dexterBaselineWalkingSpeedMultiplier, 0.1f, 6f);
+            dexterMinimumWalkingSpeedMultiplier = Mathf.Clamp(
+                dexterMinimumWalkingSpeedMultiplier, 0.1f, 1f);
+            dexterSpeedForceReleaseSeconds = Mathf.Clamp(
+                dexterSpeedForceReleaseSeconds, 0.05f, 0.6f);
+            dexterWalkingAccelerationResponseScale = Mathf.Clamp(
+                dexterWalkingAccelerationResponseScale, 0.5f, 6f);
+            dexterWalkingBrakingResponseScale = Mathf.Clamp(
+                dexterWalkingBrakingResponseScale, 0.5f, 6f);
+            dexterBaselineStrideLength = Mathf.Clamp(
+                dexterBaselineStrideLength,
+                0.05f,
+                Mathf.Max(0.05f, maximumForeAftMovement));
+            dexterHighForceStrideLength = Mathf.Clamp(
+                dexterHighForceStrideLength,
+                dexterBaselineStrideLength,
+                Mathf.Max(dexterBaselineStrideLength,
+                    maximumForeAftMovement));
+            dexterMaximumGaitCyclesPerSecond = Mathf.Clamp(
+                dexterMaximumGaitCyclesPerSecond, 0.5f, 8f);
             dexterFingerInputSensitivity = Mathf.Clamp(
                 dexterFingerInputSensitivity, 1f, 3f);
             dexterTurningSensitivity = Mathf.Clamp(
                 dexterTurningSensitivity, 1f, 3f);
+            dexterTurnMaximumSpeedReferenceMultiplier = Mathf.Clamp(
+                dexterTurnMaximumSpeedReferenceMultiplier, 1.5f, 8f);
+            turnIntentHoldSeconds = Mathf.Max(0f, turnIntentHoldSeconds);
+            turnWalkingTakeoverSeconds = Mathf.Max(
+                0f, turnWalkingTakeoverSeconds);
+            turnConstantForceTolerance = Mathf.Clamp(
+                turnConstantForceTolerance, 0.05f, 1f);
+            walkingPriorityAfterAlternation = Mathf.Max(
+                maximumAlternationInterval,
+                walkingPriorityAfterAlternation);
+            walkingIntentConfirmationSeconds = Mathf.Max(
+                0.02f, walkingIntentConfirmationSeconds);
+            walkingIntentDeltaFraction = Mathf.Clamp(
+                walkingIntentDeltaFraction, 0.001f, 0.1f);
+            establishedWalkingIntentHoldSeconds = Mathf.Clamp(
+                establishedWalkingIntentHoldSeconds, 0.6f, 1.5f);
+            singleFingerIsolationRatio = Mathf.Clamp(
+                singleFingerIsolationRatio, 0.05f, 0.75f);
             displacementPerNewton.x = Mathf.Max(0f, displacementPerNewton.x);
             displacementPerNewton.y = Mathf.Max(0f, displacementPerNewton.y);
             forceDeadZone = Mathf.Max(0f, forceDeadZone);
@@ -4012,10 +5170,13 @@ namespace Dexter.Spider
             normalForceTravelSpeed = Mathf.Max(0f, normalForceTravelSpeed);
             inputDriveReleaseDelay = Mathf.Max(0.05f, inputDriveReleaseDelay);
             minimumPressInterval = Mathf.Max(0f, minimumPressInterval);
-            maximumAlternationInterval = Mathf.Max(
-                minimumPressInterval, maximumAlternationInterval);
-            alternatingDriveSustainTime = Mathf.Max(
-                maximumAlternationInterval, alternatingDriveSustainTime);
+            maximumAlternationInterval = Mathf.Clamp(
+                maximumAlternationInterval,
+                Mathf.Max(0.05f, minimumPressInterval), 0.6f);
+            alternatingDriveSustainTime = Mathf.Clamp(
+                alternatingDriveSustainTime,
+                maximumAlternationInterval,
+                establishedWalkingIntentHoldSeconds);
             locomotionSmoothTime = Mathf.Max(0.01f, locomotionSmoothTime);
             directionChangeForceThreshold = Mathf.Max(0f, directionChangeForceThreshold);
             directionChangeHoldTime = Mathf.Max(0f, directionChangeHoldTime);
@@ -4074,6 +5235,8 @@ namespace Dexter.Spider
                 minimumJumpDuration, maximumJumpDuration);
             airborneRearLegStretch = Mathf.Max(0f, airborneRearLegStretch);
             jumpCooldown = Mathf.Max(0f, jumpCooldown);
+            jumpRearmReleaseHoldSeconds = Mathf.Max(
+                0f, jumpRearmReleaseHoldSeconds);
             turnActivationForce = Mathf.Max(0f, turnActivationForce);
             turnAxisDominanceRatio = Mathf.Clamp01(turnAxisDominanceRatio);
             turnMinimumSpeedDisplacement = Mathf.Max(
@@ -4087,6 +5250,10 @@ namespace Dexter.Spider
             maximumTurnDegreesPerSecond = Mathf.Max(
                 minimumTurnDegreesPerSecond, maximumTurnDegreesPerSecond);
             turnResponseSpeed = Mathf.Max(0.01f, turnResponseSpeed);
+            turnAngularAcceleration = Mathf.Max(
+                1f, turnAngularAcceleration);
+            turnAngularDeceleration = Mathf.Max(
+                1f, turnAngularDeceleration);
             outsideTurnStrideMultiplier = Mathf.Max(0f, outsideTurnStrideMultiplier);
             insideTurnStrideMultiplier = Mathf.Max(0f, insideTurnStrideMultiplier);
             turnRecoveryDuration = Mathf.Max(0.1f, turnRecoveryDuration);
@@ -4096,6 +5263,8 @@ namespace Dexter.Spider
             cornerRootPositionResponse = Mathf.Max(
                 0.01f, cornerRootPositionResponse);
             cornerRootMaximumSpeed = Mathf.Max(0.01f, cornerRootMaximumSpeed);
+            maximumSurfaceAnchorTrackingError = Mathf.Max(
+                0.05f, maximumSurfaceAnchorTrackingError);
             minimumSurfaceTransitionDuration = Mathf.Max(
                 0f, minimumSurfaceTransitionDuration);
             maximumSurfaceTransitionDuration = Mathf.Max(
@@ -4114,6 +5283,51 @@ namespace Dexter.Spider
 
         private void ApplyResponsiveMovementDefaults()
         {
+            // Dexter X and Y channels are mechanically coupled. The latest
+            // physical trace showed valid same-direction X turn input being
+            // rejected only because one finger also carried a much larger Y
+            // load. Preserve the two-finger/same-sign requirement while making
+            // turning consistent with the calibrated walking sensitivity.
+            dexterTurningSensitivity = Mathf.Max(
+                2.25f, dexterTurningSensitivity);
+            dexterMaximumSpeedForceMultiplier = 1.2f;
+            dexterHighForceWalkingSpeedMultiplier = Mathf.Max(
+                19.5f, dexterHighForceWalkingSpeedMultiplier);
+            dexterBaselineWalkingSpeedMultiplier = Mathf.Max(
+                3f, dexterBaselineWalkingSpeedMultiplier);
+            dexterHighForceStrideLength = Mathf.Max(
+                1.5f, dexterHighForceStrideLength);
+            dexterSpeedForceReleaseSeconds = Mathf.Max(
+                0.5f, dexterSpeedForceReleaseSeconds);
+            dexterWalkingBrakingResponseScale = Mathf.Min(
+                0.75f, dexterWalkingBrakingResponseScale);
+            maximumSurfaceAnchorTrackingError = Mathf.Max(
+                0.85f, maximumSurfaceAnchorTrackingError);
+            turnIntentHoldSeconds = Mathf.Min(
+                0.09f, turnIntentHoldSeconds);
+            turnWalkingTakeoverSeconds = Mathf.Min(
+                0.09f, turnWalkingTakeoverSeconds);
+            turnConstantForceTolerance = Mathf.Max(
+                0.45f, turnConstantForceTolerance);
+            turnResponseSpeed = Mathf.Max(
+                6f, turnResponseSpeed);
+            maximumAlternationInterval = Mathf.Clamp(
+                maximumAlternationInterval,
+                Mathf.Max(0.05f, minimumPressInterval), 0.6f);
+            establishedWalkingIntentHoldSeconds = Mathf.Clamp(
+                establishedWalkingIntentHoldSeconds, 0.6f, 1.5f);
+            alternatingDriveSustainTime = Mathf.Clamp(
+                alternatingDriveSustainTime,
+                maximumAlternationInterval,
+                establishedWalkingIntentHoldSeconds);
+            walkingPriorityAfterAlternation =
+                establishedWalkingIntentHoldSeconds;
+            turnAxisDominanceRatio = Mathf.Clamp(
+                turnAxisDominanceRatio, 0.12f, 0.30f);
+            minimumTurnDegreesPerSecond = Mathf.Max(
+                36f, minimumTurnDegreesPerSecond);
+            maximumTurnDegreesPerSecond = Mathf.Max(
+                228f, maximumTurnDegreesPerSecond);
             displacementPerNewton.x = Mathf.Max(1.25f, displacementPerNewton.x);
             displacementPerNewton.y = Mathf.Max(1.25f, displacementPerNewton.y);
             maximumDisplacement = Mathf.Max(0.75f, maximumDisplacement);

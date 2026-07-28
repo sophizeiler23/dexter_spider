@@ -22,6 +22,10 @@ namespace Dexter.Spider.EditorTools
         private static double syntheticTurnStart;
         private static double syntheticTurnEnd;
         private static float syntheticTurnForce;
+        private static double syntheticJumpStart;
+        private static double syntheticJumpEnd;
+        private static float syntheticJumpForce;
+        private static bool syntheticJumpInvoked;
         private static long syntheticSequence;
         private static DexterRelayUdpReceiver syntheticReceiver;
         private static readonly PropertyInfo LatestFrameProperty =
@@ -43,11 +47,16 @@ namespace Dexter.Spider.EditorTools
         private const string ForwardTurnStartKey = "Dexter.Spider.ForwardTurnStart";
         private const string ForwardTurnEndKey = "Dexter.Spider.ForwardTurnEnd";
         private const string ForwardTurnForceKey = "Dexter.Spider.ForwardTurnForce";
+        private const string JumpStartKey = "Dexter.Spider.JumpStart";
+        private const string JumpEndKey = "Dexter.Spider.JumpEnd";
+        private const string JumpForceKey = "Dexter.Spider.JumpForce";
         private const string WallAscentTeleportKey = "Dexter.Spider.WallAscentTeleport";
         private const string ConcaveCornerTeleportKey =
             "Dexter.Spider.ConcaveCornerTeleport";
         private const string SyntheticReceiverDisabledKey =
             "Dexter.Spider.SyntheticReceiverDisabled";
+        private const string CalibratedDexterSpeedTestKey =
+            "Dexter.Spider.CalibratedSpeedTest";
 
         static SpiderPlayModeCapture()
         {
@@ -122,6 +131,65 @@ namespace Dexter.Spider.EditorTools
             Debug.Log("Extended synthetic forward-walk capture requested.");
         }
 
+        [MenuItem("Spider/Play Mode/Test Rigidbody Jump 8 Seconds")]
+        public static void TestRigidbodyJumpEightSeconds()
+        {
+            ConfigureSyntheticTest(
+                8.5f, 1f, 1f, 0f, 0f, 0f, 0f,
+                2f, 2.45f, 8f);
+            SessionState.SetBool(WallAscentTeleportKey, false);
+            SessionState.SetBool(ConcaveCornerTeleportKey, false);
+            RequestSyntheticPlay();
+            Debug.Log("Synthetic Rigidbody-jump capture requested.");
+        }
+
+        [MenuItem("Spider/Play Mode/Test Jump Then Walk 10 Seconds")]
+        public static void TestJumpThenWalkTenSeconds()
+        {
+            ConfigureSyntheticTest(
+                10.5f, 4.5f, 9.5f, 8f, 0f, 0f, 0f,
+                2f, 2.45f, 8f);
+            SessionState.SetBool(WallAscentTeleportKey, false);
+            SessionState.SetBool(ConcaveCornerTeleportKey, false);
+            RequestSyntheticPlay();
+            Debug.Log("Synthetic jump-then-walk capture requested.");
+        }
+
+        [MenuItem("Spider/Play Mode/Test Constant X Turn 8 Seconds")]
+        public static void TestConstantXTurnEightSeconds()
+        {
+            ConfigureSyntheticTest(
+                8.5f, 1f, 1f, 0f, 1f, 6.5f, 8f);
+            SessionState.SetBool(WallAscentTeleportKey, false);
+            SessionState.SetBool(ConcaveCornerTeleportKey, false);
+            RequestSyntheticPlay();
+            Debug.Log("Synthetic constant-X turn capture requested.");
+        }
+
+        [MenuItem("Spider/Play Mode/Test Walk Then Turn 10 Seconds")]
+        public static void TestWalkThenTurnTenSeconds()
+        {
+            ConfigureSyntheticTest(
+                10f, 1f, 4f, 8f, 4f, 8.5f, 8f);
+            SessionState.SetBool(WallAscentTeleportKey, false);
+            SessionState.SetBool(ConcaveCornerTeleportKey, false);
+            RequestSyntheticPlay();
+            Debug.Log("Synthetic walk-then-turn capture requested.");
+        }
+
+        [MenuItem("Spider/Play Mode/Test Calibrated Dexter Speed 12 Seconds")]
+        public static void TestCalibratedDexterSpeedTwelveSeconds()
+        {
+            ConfigureSyntheticTest(
+                12f, 1f, 10.5f, 1f, 0f, 0f, 0f);
+            SessionState.SetBool(CalibratedDexterSpeedTestKey, true);
+            SessionState.SetBool(WallAscentTeleportKey, false);
+            SessionState.SetBool(ConcaveCornerTeleportKey, false);
+            RequestSyntheticPlay();
+            Debug.Log(
+                "Synthetic calibrated Dexter 1x-to-1.2x speed capture requested.");
+        }
+
         [MenuItem("Spider/Play Mode/Test Trough Descent 46 Seconds")]
         public static void TestTroughDescent()
         {
@@ -186,11 +254,13 @@ namespace Dexter.Spider.EditorTools
         [MenuItem("Spider/Play Mode/Test Concave Corner Approach 15 Seconds")]
         public static void TestConcaveCornerApproach()
         {
-            ConfigureSyntheticTest(15f, 1f, 13.5f, 25f, 0f, 0f, 0f);
+            ConfigureSyntheticTest(15f, 1f, 13.5f, 1.2f, 0f, 0f, 0f);
+            SessionState.SetBool(CalibratedDexterSpeedTestKey, true);
             SessionState.SetBool(WallAscentTeleportKey, false);
             SessionState.SetBool(ConcaveCornerTeleportKey, true);
             RequestSyntheticPlay();
-            Debug.Log("Synthetic concave-corner regression capture requested.");
+            Debug.Log(
+                "High-speed calibrated Dexter concave-corner regression capture requested.");
         }
 
         private static void ConfigureSyntheticTest(
@@ -200,7 +270,10 @@ namespace Dexter.Spider.EditorTools
             float walkForce,
             float turnStart,
             float turnEnd,
-            float turnForce)
+            float turnForce,
+            float jumpStart = 0f,
+            float jumpEnd = 0f,
+            float jumpForce = 0f)
         {
             SessionState.SetFloat(ForwardWalkDurationKey, duration);
             SessionState.SetFloat(ForwardWalkStartKey, walkStart);
@@ -209,6 +282,9 @@ namespace Dexter.Spider.EditorTools
             SessionState.SetFloat(ForwardTurnStartKey, turnStart);
             SessionState.SetFloat(ForwardTurnEndKey, turnEnd);
             SessionState.SetFloat(ForwardTurnForceKey, turnForce);
+            SessionState.SetFloat(JumpStartKey, jumpStart);
+            SessionState.SetFloat(JumpEndKey, jumpEnd);
+            SessionState.SetFloat(JumpForceKey, jumpForce);
         }
 
         private static void RequestSyntheticPlay()
@@ -340,17 +416,24 @@ namespace Dexter.Spider.EditorTools
                 ForwardTurnEndKey, 0f);
             syntheticTurnForce = SessionState.GetFloat(
                 ForwardTurnForceKey, 0f);
+            syntheticJumpStart = SessionState.GetFloat(JumpStartKey, 0f);
+            syntheticJumpEnd = SessionState.GetFloat(JumpEndKey, 0f);
+            syntheticJumpForce = SessionState.GetFloat(JumpForceKey, 0f);
             forwardWalkStartedAt = EditorApplication.timeSinceStartup;
             stopAt = forwardWalkStartedAt + syntheticWalkDuration;
             captureTimerRunning = true;
             forwardWalkRunning = true;
             syntheticSequence = 0;
+            syntheticJumpInvoked = false;
             syntheticReceiver = Object.FindAnyObjectByType<DexterRelayUdpReceiver>();
             if (syntheticReceiver != null)
             {
                 SessionState.SetBool(SyntheticReceiverDisabledKey, true);
                 syntheticReceiver.enabled = false;
             }
+            if (SessionState.GetBool(
+                    CalibratedDexterSpeedTestKey, false))
+                PrepareCalibratedDexterSpeedTest();
             if (SessionState.GetBool(WallAscentTeleportKey, false))
                 PrepareWallAscentStart();
             else if (SessionState.GetBool(ConcaveCornerTeleportKey, false))
@@ -402,6 +485,13 @@ namespace Dexter.Spider.EditorTools
             Vector3 rootPosition = new Vector3(
                 388.41f, 1.0500002f, 215.57f);
             spider.transform.position = rootPosition;
+            Rigidbody physicsBody = spider.GetComponent<Rigidbody>();
+            if (physicsBody != null)
+            {
+                physicsBody.position = rootPosition;
+                physicsBody.linearVelocity = Vector3.zero;
+                physicsBody.angularVelocity = Vector3.zero;
+            }
             const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
             System.Type type = typeof(DexterFrontLegIK);
             type.GetMethod("InitializeRig", flags)?.Invoke(spider, null);
@@ -411,6 +501,39 @@ namespace Dexter.Spider.EditorTools
                 spider, false);
             type.GetField("currentYawDegrees", flags)?.SetValue(
                 spider, -129.4122f);
+        }
+
+        private static void PrepareCalibratedDexterSpeedTest()
+        {
+            DexterFrontLegIK spider =
+                Object.FindAnyObjectByType<DexterFrontLegIK>();
+            if (spider == null)
+                return;
+            const BindingFlags flags =
+                BindingFlags.Instance | BindingFlags.NonPublic;
+            System.Type type = typeof(DexterFrontLegIK);
+            type.GetField(
+                "waitingForDexterMovementCalibration", flags)?.SetValue(
+                spider, false);
+            type.GetField(
+                "isDexterMovementCalibrating", flags)?.SetValue(
+                spider, false);
+            type.GetField(
+                "dexterMovementCalibrationComplete", flags)?.SetValue(
+                spider, true);
+            type.GetField(
+                "calibratedDexterReferenceForce", flags)?.SetValue(
+                spider, 1f);
+            type.GetField("leftBaseline", flags)?.SetValue(
+                spider, Vector2.zero);
+            type.GetField("rightBaseline", flags)?.SetValue(
+                spider, Vector2.zero);
+            type.GetField("hasBaseline", flags)?.SetValue(
+                spider, true);
+            type.GetField("calibratedLeftWalkingAxis", flags)?.SetValue(
+                spider, Vector2.up);
+            type.GetField("calibratedRightWalkingAxis", flags)?.SetValue(
+                spider, Vector2.up);
         }
 
         private static void UpdateSyntheticForwardWalk()
@@ -429,6 +552,7 @@ namespace Dexter.Spider.EditorTools
             float rightX = 0f;
             float leftY = 0f;
             float rightY = 0f;
+            float thumbY = 0f;
             if (elapsed >= syntheticTurnStart && elapsed < syntheticTurnEnd)
             {
                 leftX = syntheticTurnForce;
@@ -436,11 +560,41 @@ namespace Dexter.Spider.EditorTools
             }
             if (elapsed >= syntheticWalkStart && elapsed < syntheticInputEnd)
             {
+                float activeWalkForce =
+                    SessionState.GetBool(
+                        CalibratedDexterSpeedTestKey, false) &&
+                    elapsed >= 5.5
+                        ? 1.2f
+                        : syntheticWalkForce;
                 double cycle = (elapsed - syntheticWalkStart) % 0.8;
                 if (cycle < 0.2)
-                    leftY = syntheticWalkForce;
+                    leftY = activeWalkForce;
                 else if (cycle >= 0.4 && cycle < 0.6)
-                    rightY = syntheticWalkForce;
+                    rightY = activeWalkForce;
+            }
+            if (elapsed >= syntheticJumpStart && elapsed < syntheticJumpEnd)
+            {
+                thumbY = syntheticJumpForce;
+                if (!syntheticJumpInvoked)
+                {
+                    DexterFrontLegIK spider =
+                        Object.FindAnyObjectByType<DexterFrontLegIK>();
+                    MethodInfo startJump = typeof(DexterFrontLegIK).GetMethod(
+                        "StartJump",
+                        BindingFlags.Instance | BindingFlags.NonPublic);
+                    if (spider != null && startJump != null)
+                    {
+                        startJump.Invoke(
+                            spider,
+                            new object[]
+                            {
+                                syntheticJumpForce,
+                                1f,
+                                Vector2.up
+                            });
+                        syntheticJumpInvoked = true;
+                    }
+                }
             }
 
             var frame = new DexterForceFrame
@@ -448,10 +602,13 @@ namespace Dexter.Spider.EditorTools
                 type = "force",
                 version = 1,
                 sequence = ++syntheticSequence,
-                transport = "editor-walk-test",
+                transport = SessionState.GetBool(
+                    CalibratedDexterSpeedTestKey, false)
+                    ? "dexter-speed-test"
+                    : "editor-walk-test",
                 fingers = new DexterFingerMeasurements
                 {
-                    thumb = CreateSyntheticFinger(0f, 0f),
+                    thumb = CreateSyntheticFinger(0f, thumbY),
                     index = CreateSyntheticFinger(leftX, leftY),
                     middle = CreateSyntheticFinger(rightX, rightY),
                     ring = CreateSyntheticFinger(0f, 0f),
@@ -465,9 +622,13 @@ namespace Dexter.Spider.EditorTools
 
         private static DexterFingerMeasurement CreateSyntheticFinger(float x, float y)
         {
+            bool physicalDexterTest = SessionState.GetBool(
+                CalibratedDexterSpeedTestKey, false);
             return new DexterFingerMeasurement
             {
-                raw = System.Array.Empty<int>(),
+                raw = physicalDexterTest
+                    ? new[] { 1 }
+                    : System.Array.Empty<int>(),
                 force = new[] { x, y },
                 channels = 2,
                 has_data = true
@@ -498,6 +659,7 @@ namespace Dexter.Spider.EditorTools
             }
 
             SessionState.SetBool(SyntheticReceiverDisabledKey, false);
+            SessionState.SetBool(CalibratedDexterSpeedTestKey, false);
             syntheticReceiver = null;
         }
 
@@ -511,6 +673,13 @@ namespace Dexter.Spider.EditorTools
             else if (command == "OPEN_PLAY5") OpenSpiderSceneAndCapture();
             else if (command == "WALK8") TestForwardWalkEightSeconds();
             else if (command == "WALK20") TestForwardWalkTwentySeconds();
+            else if (command == "JUMP8") TestRigidbodyJumpEightSeconds();
+            else if (command == "JUMPWALK10") TestJumpThenWalkTenSeconds();
+            else if (command == "TURN8") TestConstantXTurnEightSeconds();
+            else if (command == "WALKTURN10")
+                TestWalkThenTurnTenSeconds();
+            else if (command == "DEXTERSPEED12")
+                TestCalibratedDexterSpeedTwelveSeconds();
             else if (command == "TROUGH46") TestTroughDescent();
             else if (command == "TROUGH75") TestFullTroughTraverse();
             else if (command == "ASCEND65") TestTroughWallAscent();

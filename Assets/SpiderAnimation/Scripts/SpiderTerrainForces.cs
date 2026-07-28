@@ -25,6 +25,16 @@ namespace Dexter.Spider
         [Tooltip("How quickly surface friction removes walking speed when the push ends or input is released.")]
         [SerializeField, Min(0.01f)] private float walkingBrakingDeceleration = 12f;
 
+        [Header("Experimental Surface Forces (PhilS94-inspired)")]
+        [Tooltip("Uses explicit mass, gravity, adhesion, friction, and drag forces for passive terrain motion.")]
+        [SerializeField] private bool enableExplicitSurfaceForces = true;
+        [Tooltip("Maximum active adhesion force holding the spider to a surface, in newtons.")]
+        [SerializeField, Min(0f)] private float surfaceAdhesionForceNewtons = 18f;
+        [Tooltip("Velocity-proportional damping along the contacted surface.")]
+        [SerializeField, Min(0f)] private float surfaceLinearDrag = 1.5f;
+        [Tooltip("Below this tangential speed, sufficient grip settles the spider completely.")]
+        [SerializeField, Min(0f)] private float staticGripVelocity = 0.025f;
+
         [Header("Terrain Movement")]
         [Tooltip("Walking speed retained on the configured steep slope angle.")]
         [SerializeField, Range(0.1f, 1f)] private float steepSlopeSpeedMultiplier = 0.45f;
@@ -98,6 +108,14 @@ namespace Dexter.Spider
             EnsureTerrain();
             if (TrySampleTerrainNormal(worldPosition, out Vector3 groundNormal))
             {
+                if (enableExplicitSurfaceForces)
+                {
+                    IntegrateExplicitSurfaceForces(groundNormal);
+                    environmentalVelocity = Vector3.ClampMagnitude(
+                        environmentalVelocity, maximumSlideSpeed);
+                    return worldPosition + environmentalVelocity * Time.deltaTime;
+                }
+
                 Vector3 slopeAcceleration = Vector3.ProjectOnPlane(
                     Vector3.down * gravityAcceleration, groundNormal);
                 environmentalVelocity += slopeAcceleration * Time.deltaTime;
@@ -138,6 +156,41 @@ namespace Dexter.Spider
             environmentalVelocity = Vector3.ClampMagnitude(
                 environmentalVelocity, maximumSlideSpeed);
             return worldPosition + environmentalVelocity * Time.deltaTime;
+        }
+
+        private void IntegrateExplicitSurfaceForces(Vector3 groundNormal)
+        {
+            Vector3 normal = groundNormal.normalized;
+            float mass = Mathf.Max(0.01f, bodyMassKg);
+            Vector3 gravityForce = Vector3.down * mass * gravityAcceleration;
+            Vector3 tangentGravityForce = Vector3.ProjectOnPlane(
+                gravityForce, normal);
+            environmentalVelocity += tangentGravityForce / mass * Time.deltaTime;
+
+            float passiveNormalForce = Mathf.Max(
+                0f, -Vector3.Dot(gravityForce, normal));
+            float gripStability = IsClimbableNormal(normal)
+                ? Mathf.Max(currentGripStability, minimumClimbGrip)
+                : currentGripStability;
+            float activeAdhesionForce = stickySurfaceGrip *
+                                        gripStability *
+                                        surfaceAdhesionForceNewtons;
+            float maximumFrictionForce =
+                groundFrictionCoefficient * passiveNormalForce +
+                activeAdhesionForce;
+            float frictionAcceleration = maximumFrictionForce / mass;
+            environmentalVelocity = Vector3.MoveTowards(
+                environmentalVelocity,
+                Vector3.zero,
+                frictionAcceleration * Time.deltaTime);
+            environmentalVelocity *= Mathf.Exp(
+                -surfaceLinearDrag * Time.deltaTime);
+            environmentalVelocity = Vector3.ProjectOnPlane(
+                environmentalVelocity, normal);
+
+            if (environmentalVelocity.magnitude <= staticGripVelocity &&
+                tangentGravityForce.magnitude <= maximumFrictionForce)
+                environmentalVelocity = Vector3.zero;
         }
 
         public float GetMovementMultiplier(Vector3 worldPosition)
@@ -820,6 +873,10 @@ namespace Dexter.Spider
             walkingAcceleration = Mathf.Max(0.01f, walkingAcceleration);
             walkingBrakingDeceleration = Mathf.Max(
                 0.01f, walkingBrakingDeceleration);
+            surfaceAdhesionForceNewtons = Mathf.Max(
+                0f, surfaceAdhesionForceNewtons);
+            surfaceLinearDrag = Mathf.Max(0f, surfaceLinearDrag);
+            staticGripVelocity = Mathf.Max(0f, staticGripVelocity);
             bodyMassKg = Mathf.Max(0.01f, bodyMassKg);
             fullSupportCapacityKg = Mathf.Max(0.01f, fullSupportCapacityKg);
             steepSlopeSpeedMultiplier = Mathf.Clamp(
