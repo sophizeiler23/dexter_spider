@@ -1,0 +1,16 @@
+fileFormatVersion: 2
+guid: 5b01e3d9186192744b1a3d97021bf2a2
+timeCreated: 1526370176
+licenseType: Store
+ShaderImporter:
+  defaultTextures: []
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 132195
+  packageName: Meadow Environment - Dynamic Nature
+  packageVersion: 3.0.4
+  assetPath: Assets/NatureManufacture Assets/Object Shaders/NM_indirect.cginc
+  uploadId: 885180

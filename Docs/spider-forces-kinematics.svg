@@ -1,0 +1,231 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1080" viewBox="0 0 1600 1080" role="img" aria-labelledby="title desc">
+  <title id="title">Dexter spider forces and kinematics</title>
+  <desc id="desc">A system diagram showing Dexter finger force inputs, gesture classification, tetrapod gait generation, root and body kinematics, CCD inverse kinematics, and the custom terrain gravity, friction, adhesion, clearance, and collision constraints.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#08111f"/>
+      <stop offset="1" stop-color="#111b31"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#16233c"/>
+      <stop offset="1" stop-color="#101a2e"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="5" stdDeviation="7" flood-color="#000814" flood-opacity="0.45"/>
+    </filter>
+    <marker id="arrowForce" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#fbbf24"/>
+    </marker>
+    <marker id="arrowControl" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#a78bfa"/>
+    </marker>
+    <marker id="arrowMotion" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#22d3ee"/>
+    </marker>
+    <marker id="arrowSurface" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#34d399"/>
+    </marker>
+    <marker id="arrowConstraint" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#fb7185"/>
+    </marker>
+    <style>
+      .title { font: 700 34px Inter, Segoe UI, sans-serif; fill: #f8fafc; letter-spacing: .3px; }
+      .subtitle { font: 400 16px Inter, Segoe UI, sans-serif; fill: #a9b8cf; }
+      .section { font: 700 18px Inter, Segoe UI, sans-serif; fill: #e7eefb; letter-spacing: 1.4px; }
+      .box-title { font: 700 18px Inter, Segoe UI, sans-serif; fill: #f8fafc; }
+      .body { font: 400 14px Inter, Segoe UI, sans-serif; fill: #cbd5e1; }
+      .small { font: 400 12.5px Inter, Segoe UI, sans-serif; fill: #aebdd2; }
+      .equation { font: 500 13px ui-monospace, SFMono-Regular, Consolas, monospace; fill: #d9fbee; }
+      .tag { font: 700 12px Inter, Segoe UI, sans-serif; letter-spacing: .6px; }
+      .label { font: 600 12.5px Inter, Segoe UI, sans-serif; }
+      .panel { fill: url(#panel); stroke: #304260; stroke-width: 1.4; }
+      .group { fill: #0c1628; stroke: #253650; stroke-width: 1.4; }
+      .force-box { fill: #241b12; stroke: #f59e0b; stroke-width: 1.8; }
+      .control-box { fill: #1c1932; stroke: #8b5cf6; stroke-width: 1.8; }
+      .motion-box { fill: #102531; stroke: #06b6d4; stroke-width: 1.8; }
+      .surface-box { fill: #102920; stroke: #10b981; stroke-width: 1.8; }
+      .constraint-box { fill: #2b1721; stroke: #f43f5e; stroke-width: 1.8; }
+      .force-line { fill: none; stroke: #fbbf24; stroke-width: 2.7; marker-end: url(#arrowForce); }
+      .control-line { fill: none; stroke: #a78bfa; stroke-width: 2.4; marker-end: url(#arrowControl); }
+      .motion-line { fill: none; stroke: #22d3ee; stroke-width: 2.7; marker-end: url(#arrowMotion); }
+      .surface-line { fill: none; stroke: #34d399; stroke-width: 2.7; marker-end: url(#arrowSurface); }
+      .constraint-line { fill: none; stroke: #fb7185; stroke-width: 2.7; marker-end: url(#arrowConstraint); }
+      .dash { stroke-dasharray: 7 6; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="1080" fill="url(#background)"/>
+  <circle cx="1480" cy="60" r="210" fill="#0d9488" opacity="0.045"/>
+  <circle cx="100" cy="1010" r="270" fill="#7c3aed" opacity="0.045"/>
+
+  <text id="titleText" x="48" y="52" class="title">Dexter Spider — Forces &amp; Kinematic Motion</text>
+  <text x="49" y="80" class="subtitle">Current implementation: force-controlled procedural animation with custom surface dynamics</text>
+  <rect x="1160" y="34" width="388" height="48" rx="13" fill="#2a1720" stroke="#fb7185" stroke-width="1.4"/>
+  <text x="1184" y="55" class="tag" fill="#fb7185">IMPORTANT</text>
+  <text x="1184" y="72" class="small" fill="#fecdd3">No Rigidbody / AddForce / joint torque solver</text>
+
+  <!-- Input and interpretation -->
+  <text x="48" y="120" class="section">1 · FORCE SIGNALS</text>
+  <rect x="46" y="137" width="968" height="213" rx="18" class="group" filter="url(#shadow)"/>
+
+  <rect x="70" y="163" width="264" height="158" rx="15" class="force-box"/>
+  <text x="92" y="191" class="box-title">Dexter finger forces</text>
+  <text x="92" y="220" class="body">Index → left four legs</text>
+  <text x="92" y="244" class="body">Middle → right four legs</text>
+  <text x="92" y="273" class="equation" fill="#fde68a">F = (Fx, Fy) newtons</text>
+  <text x="92" y="299" class="small">Latest: Index (−0.381, −0.763)</text>
+
+  <path d="M 334 242 L 370 242" class="force-line"/>
+
+  <rect x="371" y="163" width="270" height="158" rx="15" class="control-box"/>
+  <text x="393" y="191" class="box-title">Calibrate &amp; smooth</text>
+  <text x="393" y="220" class="body">10 s physical-input calibration</text>
+  <text x="393" y="244" class="body">Normal 1.174 N · Max 1.409 N</text>
+  <text x="393" y="271" class="equation" fill="#ddd6fe">α = 1 − exp(−Δt / 0.06)</text>
+  <text x="393" y="299" class="small">Tare currently off · press threshold .005 N</text>
+
+  <path d="M 641 242 L 677 242" class="control-line"/>
+
+  <rect x="678" y="153" width="310" height="178" rx="15" class="control-box"/>
+  <text x="700" y="181" class="box-title">Gesture classifier</text>
+  <rect x="700" y="198" width="266" height="31" rx="8" fill="#342954"/>
+  <text x="714" y="219" class="body">Single dominant finger → side wave</text>
+  <rect x="700" y="237" width="266" height="31" rx="8" fill="#342954"/>
+  <text x="714" y="258" class="body">L ↔ R within 0.6 s → walk</text>
+  <rect x="700" y="276" width="266" height="31" rx="8" fill="#342954"/>
+  <text x="714" y="297" class="body">Both Fx same sign → turn</text>
+
+  <!-- Kinematics -->
+  <text x="48" y="390" class="section">2 · PROCEDURAL KINEMATICS</text>
+  <rect x="46" y="408" width="968" height="574" rx="18" class="group" filter="url(#shadow)"/>
+
+  <rect x="73" y="439" width="272" height="157" rx="15" class="motion-box"/>
+  <text x="95" y="467" class="box-title">Force → gait demand</text>
+  <text x="95" y="494" class="body">Strength s = InverseLerp(force)</text>
+  <text x="95" y="519" class="body">Stride: 0.325 → 0.52 units</text>
+  <text x="95" y="544" class="body">Lift: 0.223 → 0.466 units</text>
+  <text x="95" y="569" class="body">Base speed: 0.69 → 2.6 units/s</text>
+
+  <rect x="381" y="439" width="272" height="157" rx="15" class="motion-box"/>
+  <text x="403" y="467" class="box-title">Tetrapod scheduler</text>
+  <text x="403" y="495" class="body">Group A: L1 L3 + R2 R4</text>
+  <text x="403" y="520" class="body">Group B: R1 R3 + L2 L4</text>
+  <text x="403" y="547" class="body">50% swing · 50% planted stance</text>
+  <text x="403" y="572" class="small">Phase is matched to actual root travel</text>
+
+  <rect x="689" y="439" width="294" height="157" rx="15" class="motion-box"/>
+  <text x="711" y="467" class="box-title">Root translation &amp; yaw</text>
+  <text x="711" y="494" class="body">Forward-only transform displacement</text>
+  <text x="711" y="519" class="body">Acceleration +5 · braking −12</text>
+  <text x="711" y="544" class="body">Turn: 10 → 45°/s</text>
+  <text x="711" y="569" class="small">Current: speed 0 · yaw −20.43°</text>
+
+  <path d="M 345 518 L 381 518" class="motion-line"/>
+  <path d="M 653 518 L 689 518" class="motion-line"/>
+  <path d="M 828 331 L 828 423" class="control-line"/>
+  <text x="839" y="380" class="label" fill="#c4b5fd">turn</text>
+  <path d="M 780 331 C 740 378, 266 371, 210 423" class="control-line"/>
+  <text x="484" y="382" class="label" fill="#c4b5fd">valid alternation</text>
+
+  <rect x="73" y="653" width="272" height="192" rx="15" class="motion-box"/>
+  <text x="95" y="681" class="box-title">World-space foot targets</text>
+  <text x="95" y="709" class="body">Swing: smooth cosine travel</text>
+  <text x="95" y="733" class="body">+ sine lift along surface normal</text>
+  <text x="95" y="761" class="body">Stance: target stays fixed in world</text>
+  <text x="95" y="785" class="body">→ body passes over planted foot</text>
+  <text x="95" y="817" class="small">Lag &gt; .58 → 0.24 s recovery step</text>
+
+  <rect x="381" y="653" width="272" height="192" rx="15" class="motion-box"/>
+  <text x="403" y="681" class="box-title">CCD inverse kinematics</text>
+  <text x="403" y="709" class="body">Rotate joints toward each target</text>
+  <text x="403" y="733" class="body">14 iterations · 0.001 tolerance</text>
+  <text x="403" y="757" class="body">28° max adjustment / iteration</text>
+  <text x="403" y="781" class="body">Hip ±38° · other joints ±42°</text>
+  <text x="403" y="817" class="small">Bone lengths remain unchanged</text>
+
+  <rect x="689" y="653" width="294" height="192" rx="15" class="motion-box"/>
+  <text x="711" y="681" class="box-title">Body posture &amp; balance</text>
+  <text x="711" y="709" class="body">Ground body offset: −0.64 units</text>
+  <text x="711" y="733" class="body">Cadence imbalance: tip ≤ 4.5°</text>
+  <text x="711" y="757" class="body">Lateral shift ≤ 0.10 units</text>
+  <text x="711" y="781" class="body">Finger lift ≤ 0.4 (front: 0.64)</text>
+  <text x="711" y="817" class="small">Virtual support controls grip, not height</text>
+
+  <path d="M 517 596 C 517 624, 209 620, 209 637" class="motion-line"/>
+  <path d="M 345 749 L 381 749" class="motion-line"/>
+  <path d="M 689 749 L 669 749" class="motion-line"/>
+  <path d="M 836 596 L 836 637" class="motion-line dash"/>
+  <text x="850" y="623" class="label" fill="#67e8f9">moves hips</text>
+  <path d="M 887 331 C 1010 362, 1022 628, 983 681" class="control-line"/>
+  <text x="921" y="376" class="label" fill="#c4b5fd">single finger / cadence</text>
+
+  <rect x="73" y="881" width="910" height="67" rx="13" class="panel"/>
+  <text x="96" y="908" class="box-title">What finally moves?</text>
+  <text x="96" y="932" class="body">The root position/rotation and leg-bone rotations are written directly every LateUpdate. No momentum or joint torque is solved.</text>
+
+  <!-- Surface forces and constraints -->
+  <text x="1060" y="120" class="section">3 · SURFACE DYNAMICS</text>
+  <rect x="1058" y="137" width="494" height="845" rx="18" class="group" filter="url(#shadow)"/>
+
+  <rect x="1084" y="163" width="442" height="121" rx="15" class="surface-box"/>
+  <text x="1106" y="191" class="box-title">Terrain sampling</text>
+  <text x="1106" y="219" class="body">Surface point + normal n + slope angle θ</text>
+  <text x="1106" y="244" class="body">Travel direction projected onto surface</text>
+  <text x="1106" y="268" class="small">Slope speed: 1.0 → 0.45 by 38°</text>
+
+  <!-- Free-body sketch -->
+  <rect x="1084" y="306" width="442" height="230" rx="15" class="panel"/>
+  <text x="1106" y="334" class="box-title">Custom free-body model</text>
+  <path d="M 1114 493 L 1490 395" stroke="#6ee7b7" stroke-width="5" stroke-linecap="round"/>
+  <path d="M 1284 427 Q 1315 391 1351 418 Q 1384 443 1344 461 Q 1304 474 1284 427" fill="#93c5fd" stroke="#dbeafe" stroke-width="2"/>
+  <circle cx="1304" cy="448" r="5" fill="#f8fafc"/>
+  <path d="M 1318 442 L 1318 518" class="force-line"/>
+  <text x="1328" y="510" class="label" fill="#fde68a">gravity / weight</text>
+  <path d="M 1320 434 L 1364 350" class="surface-line"/>
+  <text x="1370" y="355" class="label" fill="#6ee7b7">normal constraint</text>
+  <path d="M 1289 458 L 1209 479" class="force-line"/>
+  <text x="1112" y="472" class="label" fill="#fde68a">downslope component</text>
+  <path d="M 1348 429 L 1433 407" class="constraint-line"/>
+  <text x="1371" y="393" class="label" fill="#fda4af">friction + adhesion</text>
+  <text x="1106" y="522" class="small">The normal reaction is positional: the root/feet are projected out of the surface.</text>
+
+  <rect x="1084" y="560" width="442" height="181" rx="15" class="surface-box"/>
+  <text x="1106" y="588" class="box-title">Environmental velocity</text>
+  <text x="1106" y="617" class="equation">a_slope = ProjectOnPlane(9.81·down, n)</text>
+  <text x="1106" y="642" class="equation">a_friction = 0.9 · 9.81 · nᵧ</text>
+  <text x="1106" y="667" class="equation">a_adhesion = grip · 9.81 · nᵧ</text>
+  <text x="1106" y="692" class="equation">wall adhesion ≥ 1.2 · 9.81 = 11.77</text>
+  <text x="1106" y="722" class="small">Integrate velocity, oppose it toward zero, clamp to 0.5 units/s</text>
+
+  <rect x="1084" y="766" width="442" height="179" rx="15" class="constraint-box"/>
+  <text x="1106" y="794" class="box-title">Contact &amp; collision constraints</text>
+  <text x="1106" y="822" class="body">Root sphere cast: radius .48 · skin .075</text>
+  <text x="1106" y="847" class="body">Foot sphere casts prevent target penetration</text>
+  <text x="1106" y="872" class="body">Root clearance uses center + four samples</text>
+  <text x="1106" y="897" class="body">45°–89.5° terrain treated as climbable</text>
+  <text x="1106" y="925" class="small">Hard hits truncate motion and clear slide velocity</text>
+
+  <!-- Cross-system connections -->
+  <path d="M 983 518 C 1032 518, 1030 224, 1084 224" class="surface-line"/>
+  <text x="994" y="497" class="label" fill="#6ee7b7">desired root point</text>
+  <path d="M 1084 255 C 1038 266, 1042 699, 345 699" class="surface-line dash"/>
+  <text x="1018" y="671" class="label" fill="#6ee7b7">surface-projected foot contacts</text>
+  <path d="M 1084 692 C 1041 692, 1039 553, 983 553" class="surface-line"/>
+  <text x="995" y="606" class="label" fill="#6ee7b7">slide Δx</text>
+  <path d="M 1084 855 C 1039 855, 1033 796, 653 796" class="constraint-line dash"/>
+  <text x="873" y="844" class="label" fill="#fda4af">clamp root &amp; foot targets</text>
+
+  <!-- Legend -->
+  <rect x="46" y="1011" width="1506" height="45" rx="12" fill="#0b1527" stroke="#273954"/>
+  <line x1="73" y1="1033" x2="111" y2="1033" stroke="#fbbf24" stroke-width="4"/>
+  <text x="122" y="1038" class="small">measured/custom force</text>
+  <line x1="294" y1="1033" x2="332" y2="1033" stroke="#a78bfa" stroke-width="4"/>
+  <text x="343" y="1038" class="small">control decision</text>
+  <line x1="487" y1="1033" x2="525" y2="1033" stroke="#22d3ee" stroke-width="4"/>
+  <text x="536" y="1038" class="small">kinematic motion</text>
+  <line x1="687" y1="1033" x2="725" y2="1033" stroke="#34d399" stroke-width="4"/>
+  <text x="736" y="1038" class="small">terrain response</text>
+  <line x1="887" y1="1033" x2="925" y2="1033" stroke="#fb7185" stroke-width="4"/>
+  <text x="936" y="1038" class="small">collision / constraint</text>
+  <text x="1184" y="1038" class="small" fill="#94a3b8">Unity units assumed ≈ metres</text>
+</svg>

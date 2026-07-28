@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: 56e4c2498bf382a4cbaee58bab3ae54f
+timeCreated: 1538131939
+licenseType: Store
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 0
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 132195
+  packageName: Meadow Environment - Dynamic Nature
+  packageVersion: 3.0.4
+  assetPath: Assets/NatureManufacture Assets/Meadow Environment Dynamic Nature/Demo
+    Scenes/PostProcessVolumeProfile Unity Standard Demo Scene Meadow.asset
+  uploadId: 885180

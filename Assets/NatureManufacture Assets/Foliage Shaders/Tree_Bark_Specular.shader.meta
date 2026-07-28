@@ -1,0 +1,16 @@
+fileFormatVersion: 2
+guid: 2afa0cac99508c340a7bb00454296749
+ShaderImporter:
+  externalObjects: {}
+  defaultTextures: []
+  nonModifiableTextures: []
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 132195
+  packageName: Meadow Environment - Dynamic Nature
+  packageVersion: 3.0.4
+  assetPath: Assets/NatureManufacture Assets/Foliage Shaders/Tree_Bark_Specular.shader
+  uploadId: 885180

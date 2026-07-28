@@ -1,0 +1,16 @@
+fileFormatVersion: 2
+guid: 07e3b97e5e97f1c44b4c26960d9fb0a8
+timeCreated: 1523437911
+licenseType: Store
+ShaderImporter:
+  defaultTextures: []
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 132195
+  packageName: Meadow Environment - Dynamic Nature
+  packageVersion: 3.0.4
+  assetPath: Assets/NatureManufacture Assets/Foliage Shaders/NMWind.cginc
+  uploadId: 885180

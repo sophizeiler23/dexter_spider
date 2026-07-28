@@ -1,0 +1,16 @@
+fileFormatVersion: 2
+guid: 60f552ef5fdbb184f96c5119344a602e
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 0
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 132195
+  packageName: Meadow Environment - Dynamic Nature
+  packageVersion: 3.0.4
+  assetPath: Assets/NatureManufacture Assets/Meadow Environment Dynamic Nature/Demo
+    Scenes/Unity Standard Demo SceneSettings.lighting
+  uploadId: 885180

@@ -1,0 +1,17 @@
+fileFormatVersion: 2
+guid: 4e9be09ec4e87704d936b6fb8eaa9ff7
+ShaderImporter:
+  externalObjects: {}
+  defaultTextures: []
+  nonModifiableTextures: []
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 132195
+  packageName: Meadow Environment - Dynamic Nature
+  packageVersion: 3.0.4
+  assetPath: Assets/NatureManufacture Assets/Object Shaders/Standard_Specular_Snow
+    CutOut.shader
+  uploadId: 885180
